@@ -1,0 +1,13 @@
+{
+  "name": "agent-skills",
+  "owner": {
+    "name": "nystrom"
+  },
+  "plugins": [
+    {
+      "name": "interactive-code-review",
+      "source": "./plugins/interactive-code-review",
+      "description": "Walk a reviewer through a change set one change at a time, interactively — a guided, grill-me-style review session in COMMENT mode (post GitHub comments) or FIX mode (apply fixes locally)."
+    }
+  ]
+}

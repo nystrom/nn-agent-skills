@@ -1,0 +1,8 @@
+{
+  "name": "interactive-code-review",
+  "description": "Walk a reviewer through a change set one change at a time, interactively — a guided, grill-me-style review session in COMMENT mode (post GitHub comments) or FIX mode (apply fixes locally).",
+  "version": "1.0.0",
+  "author": {
+    "name": "nystrom"
+  }
+}
