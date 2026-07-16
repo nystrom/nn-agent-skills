@@ -1,0 +1,15 @@
+{
+  "description": "AlphaEvolve stop hook — drives the evolution loop between iterations",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/stop-hook.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}
