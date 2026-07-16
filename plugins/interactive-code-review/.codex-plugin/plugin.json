@@ -1,0 +1,27 @@
+{
+  "name": "interactive-code-review",
+  "version": "1.0.0",
+  "description": "Walk through a change set one change at a time in comment or fix mode.",
+  "author": {
+    "name": "nystrom",
+    "url": "https://github.com/nystrom"
+  },
+  "homepage": "https://github.com/nystrom/agent-skills/tree/main/plugins/interactive-code-review",
+  "repository": "https://github.com/nystrom/agent-skills",
+  "license": "MIT",
+  "keywords": ["code-review", "github", "interactive", "refactoring"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Interactive Code Review",
+    "shortDescription": "Review changes interactively, one at a time.",
+    "longDescription": "Walk through a branch or working-tree diff one logical change at a time, either drafting GitHub comments or applying verified fixes locally.",
+    "developerName": "nystrom",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "websiteURL": "https://github.com/nystrom/agent-skills/tree/main/plugins/interactive-code-review",
+    "defaultPrompt": [
+      "Review this branch interactively, one change at a time.",
+      "Review my local changes and fix the problems."
+    ]
+  }
+}

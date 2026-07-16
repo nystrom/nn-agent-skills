@@ -1,0 +1,4 @@
+interface:
+  display_name: "Evolve"
+  short_description: "Evolve code through measured candidate mutations"
+  default_prompt: "Use $evolve to optimize this code against a measurable fitness function."

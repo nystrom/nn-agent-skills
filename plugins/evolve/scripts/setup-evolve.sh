@@ -143,5 +143,6 @@ AlphaEvolve initialized.
   Iterations: $MAX_ITERATIONS
 
 Iteration 1 context written to .evolve/current-iteration.json.
-The stop hook will drive subsequent iterations automatically.
+Continue with the iteration loop. Claude Code's stop hook will advance it
+automatically; other agents should call next-iteration.sh after each result.
 EOF

@@ -1,0 +1,27 @@
+{
+  "name": "evolve",
+  "version": "0.1.0",
+  "description": "Optimize code through measured evolutionary candidate mutations.",
+  "author": {
+    "name": "nystrom",
+    "url": "https://github.com/nystrom"
+  },
+  "homepage": "https://github.com/nystrom/agent-skills/tree/main/plugins/evolve",
+  "repository": "https://github.com/nystrom/agent-skills",
+  "license": "MIT",
+  "keywords": ["evolution", "optimization", "genetic", "benchmarking", "performance"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Evolve",
+    "shortDescription": "Evolve code against a measurable fitness function.",
+    "longDescription": "Generate diverse code mutations, evaluate them in isolated worktrees, and retain the strongest verified candidates in a MAP-Elites archive.",
+    "developerName": "nystrom",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "websiteURL": "https://github.com/nystrom/agent-skills/tree/main/plugins/evolve",
+    "defaultPrompt": [
+      "Optimize this function against a benchmark with Evolve.",
+      "Show the status of the current Evolve run."
+    ]
+  }
+}

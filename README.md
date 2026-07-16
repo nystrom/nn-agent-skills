@@ -1,6 +1,6 @@
 # agent-skills
 
-A [Claude Code](https://claude.com/claude-code) plugin marketplace hosting agent skills.
+Installable agent skills and plugins for Claude Code, Codex, and `agy`.
 
 ## Plugins
 
@@ -30,11 +30,11 @@ candidate mutations in isolated git worktrees, evaluates them with a
 user-defined fitness function, and retains the strongest result across
 iterations.
 
-The plugin provides `/evolve:evolve`, `/evolve:evolve-status`, and
-`/evolve:evolve-stop`, plus the agents, hooks, and scripts that drive the
-optimization loop.
+Claude Code and `agy` receive the Evolve commands, agents, hooks, and scripts.
+Codex receives a native `$evolve` skill that runs the same scripts without
+depending on Claude's stop hook.
 
-## Installation
+## Install with Claude Code
 
 Add this marketplace, then install the plugin you want:
 
@@ -57,3 +57,30 @@ interactively, walk through changes one by one, "grill me on this diff", or
 "review my local changes and fix them". Invoke Evolve with `/evolve:evolve` and
 the target plus fitness criteria; see [`plugins/evolve/README.md`](plugins/evolve/README.md)
 for examples and requirements.
+
+## Install with Codex
+
+```bash
+codex plugin marketplace add nystrom/agent-skills
+codex plugin add interactive-code-review@agent-skills
+codex plugin add evolve@agent-skills
+```
+
+Invoke the skills as `$interactive-code-review` and `$evolve`, or describe a
+matching task and let Codex select the skill.
+
+## Install with agy
+
+`agy` installs every plugin in the repository in one operation:
+
+```bash
+git clone https://github.com/nystrom/agent-skills.git
+agy plugin install ./agent-skills
+```
+
+To install only one plugin, pass its directory instead:
+
+```bash
+agy plugin install ./agent-skills/plugins/evolve
+agy plugin install ./agent-skills/plugins/interactive-code-review
+```

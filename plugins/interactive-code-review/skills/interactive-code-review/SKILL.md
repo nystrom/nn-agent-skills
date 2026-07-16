@@ -1,33 +1,17 @@
 ---
 name: interactive-code-review
 description: >-
-  Walk a reviewer through a change set one change at a time, interactively —
-  like a guided, grill-me-style review session rather than a static report.
-  Runs in one of two modes. COMMENT mode (reviewing someone else's PR/branch):
-  for each change it explains, to someone UNFAMILIAR with the codebase, what the
-  change is, why it exists, what uses it and who consumes the result, then offers
-  three ready-to-post comment options and posts the chosen one to GitHub. FIX
-  mode (reviewing code local to this machine that you intend to fix): for each
-  change it gives just enough context to fix safely, then proposes and applies
-  the fix locally, verifying after each edit. It auto-detects the mode and states
-  it; you can override in a word. It opens with a whole-PR overview and a
-  high-level verdict (a justification or critique of the change as a whole,
-  including cross-cutting concerns) before walking the changes one at a time.
-  Either way the goal is to improve the software's long-run quality, so the
-  review also hunts for AI slop, refactoring and abstraction opportunities, and
-  dead code — not just bugs. The review itself
-  fans out to a parallel subagent per relevant review skill installed in the
-  environment (discovered at review time, not a fixed set), each loading and
-  applying that skill, merged into one findings list. It reviews the NET
-  diff (default: against origin/main; fix mode also includes uncommitted
-  working-tree changes), going commit by commit to explain intent while ignoring
-  changes that later commits undid, and skips bookkeeping noise. In a GUI it
-  renders an HTML card per change. Use this whenever the user wants to review a
-  PR or branch interactively, be walked through changes one by one, "grill me on
-  this diff", review commit by commit, review against origin/main, draft and post
-  GitHub review comments, OR walk through local changes and fix the problems
-  ("fix the problems", "review my local changes and fix them") — even if they
-  don't say "interactive".
+  Walk through a net branch or working-tree diff one logical change at a time.
+  Use COMMENT mode for someone else's PR or branch: explain intent, callers,
+  consumers, and tests to a reviewer unfamiliar with the code, then offer and
+  post GitHub comment options. Use FIX mode for local code: propose, apply, and
+  verify each fix. Open with a whole-change overview and verdict, skip
+  bookkeeping noise, and inspect commit history only to recover intent. Fan out
+  across relevant installed review skills and merge their findings, including
+  correctness, AI slop, refactoring, duplication, and dead code. Use when the
+  user asks for an interactive PR, branch, commit-by-commit, or local-change
+  review; says "grill me on this diff"; wants GitHub review comments; or asks to
+  review local changes and fix the problems.
 ---
 
 # Interactive Code Review

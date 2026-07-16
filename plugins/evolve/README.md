@@ -1,6 +1,6 @@
 # Evolve
 
-LLM-driven evolutionary code optimizer for Claude Code, inspired by Google
+LLM-driven evolutionary code optimizer for Claude Code, Codex, and `agy`, inspired by Google
 DeepMind's AlphaEvolve and the [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve)
 implementation.
 
@@ -28,6 +28,8 @@ Each iteration:
 5. **Update archive** — insert if it improves its (complexity, approach) cell
 
 ## Install
+
+### Claude Code
 
 Install it from the `nystrom/agent-skills` marketplace:
 
@@ -58,6 +60,27 @@ Validate manifest changes before publishing:
 claude plugin validate ./plugins/evolve --strict
 ```
 
+### Codex
+
+```bash
+codex plugin marketplace add nystrom/agent-skills
+codex plugin add evolve@agent-skills
+```
+
+Invoke `$evolve` or ask Codex to optimize a target against a measurable fitness
+function. The native Codex skill drives the iteration loop directly.
+
+### agy
+
+From a checkout of `agent-skills`:
+
+```bash
+agy plugin install ./plugins/evolve
+```
+
+`agy` imports the Evolve commands as skills and also installs its agents and
+hooks.
+
 ## Requirements
 
 - Must be in a **git repository**
@@ -67,23 +90,29 @@ claude plugin validate ./plugins/evolve --strict
 
 ## Usage
 
+In Claude Code, use the namespaced commands:
+
 ```bash
 # Start an evolution run
-/evolve "the sort() function in src/sort.ts" \
+/evolve:evolve "the sort() function in src/sort.ts" \
   --fitness "run make bench and maximize ops/sec"
 
 # With options
-/evolve "the query builder in db/query.go" \
+/evolve:evolve "the query builder in db/query.go" \
   --fitness "go test -bench=BenchmarkQuery and minimize ns/op" \
   --branch main \
   --iterations 20
 
 # Check progress during a run
-/evolve-status
+/evolve:evolve-status
 
 # Stop early (prompts to apply best result)
-/evolve-stop
+/evolve:evolve-stop
 ```
+
+In Codex or `agy`, invoke the installed Evolve skill or ask naturally, for
+example: “Use Evolve to optimize the sort function; run `make bench` and
+maximize operations per second.”
 
 ## Fitness prompts
 
