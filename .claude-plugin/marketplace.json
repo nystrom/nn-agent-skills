@@ -1,5 +1,6 @@
 {
   "name": "agent-skills",
+  "description": "A collection of installable Claude Code plugins and agent skills.",
   "owner": {
     "name": "nystrom"
   },
@@ -8,6 +9,11 @@
       "name": "interactive-code-review",
       "source": "./plugins/interactive-code-review",
       "description": "Walk a reviewer through a change set one change at a time, interactively — a guided, grill-me-style review session in COMMENT mode (post GitHub comments) or FIX mode (apply fixes locally)."
+    },
+    {
+      "name": "evolve",
+      "source": "./plugins/evolve",
+      "description": "LLM-driven evolutionary code optimizer. Mutates code in isolated git worktrees, evaluates fitness, and surfaces the best variant."
     }
   ]
 }

@@ -23,13 +23,25 @@ It reviews the net diff (default: against `origin/main`), fans out to a parallel
 subagent per relevant review skill installed in the environment, and hunts for
 AI slop, refactoring opportunities, and dead code — not just bugs.
 
+### evolve
+
+An LLM-driven evolutionary code optimizer inspired by AlphaEvolve. It runs
+candidate mutations in isolated git worktrees, evaluates them with a
+user-defined fitness function, and retains the strongest result across
+iterations.
+
+The plugin provides `/evolve:evolve`, `/evolve:evolve-status`, and
+`/evolve:evolve-stop`, plus the agents, hooks, and scripts that drive the
+optimization loop.
+
 ## Installation
 
-Add this marketplace, then install the plugin:
+Add this marketplace, then install the plugin you want:
 
 ```
 /plugin marketplace add nystrom/agent-skills
 /plugin install interactive-code-review@agent-skills
+/plugin install evolve@agent-skills
 ```
 
 Or from the terminal:
@@ -37,8 +49,11 @@ Or from the terminal:
 ```bash
 claude plugin marketplace add nystrom/agent-skills
 claude plugin install interactive-code-review@agent-skills
+claude plugin install evolve@agent-skills
 ```
 
 Once installed, invoke it by asking Claude Code to review a PR or branch
 interactively, walk through changes one by one, "grill me on this diff", or
-"review my local changes and fix them".
+"review my local changes and fix them". Invoke Evolve with `/evolve:evolve` and
+the target plus fitness criteria; see [`plugins/evolve/README.md`](plugins/evolve/README.md)
+for examples and requirements.
