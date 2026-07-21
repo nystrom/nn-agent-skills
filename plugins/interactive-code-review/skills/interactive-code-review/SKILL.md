@@ -151,6 +151,11 @@ bring up again. The reviewer's attention is the scarce resource.
 
 Order the surviving important changes into a review queue. Group by logical
 change, not by file: one reviewable idea = one queue item, even across files.
+**There is no cap on the queue length** — it holds *every* important change,
+whether that is 2 or 30. Never truncate to a "top N" or a round number, and never
+drop a real change to keep the session short; only bookkeeping (above) is
+collapsed. The counter total `M` is simply however many important changes there
+are.
 
 ### 4. For each change, gather context
 
@@ -200,13 +205,16 @@ won't show up as a skill; find its instruction file with a glob like
 itself, and let each lens self-gate on its own stated domain against the repo and
 diff — biasing toward inclusion, since a standards doc (`CLAUDE.md`, etc.) is
 almost always present and overlapping general lenses de-duplicate at the merge
-step. The `code-review` command is comment-mode-only (it needs a PR): skip it in
-fix mode, and in comment mode apply it by **reading its instruction file and
-following the methodology while skipping its eligibility bail, its confidence
-filter, and its final GitHub post** — it returns findings, it never comments.
-Skip any lens that genuinely has no context, and say so rather than faking
-findings. If no subagent tool is available, load and apply the lenses inline in
-sequence — same merged list, no parallelism.
+step. Apply the `code-review` command in **both modes** by **reading its
+instruction file and following the methodology while skipping its eligibility
+bail, its confidence filter, and its final GitHub post** — it returns findings, it
+never comments; its only PR dependency is in those stripped reporting steps, so in
+fix mode you just feed it the fix-mode diff. A quality-review skill that ends by
+applying a change (e.g. `simplify`) is a lens too: invoke it via the `Skill` tool
+but **stop at its findings**, returning the change as a `suggested_fix` rather than
+letting it edit. Skip any lens that genuinely has no context, and say so rather
+than faking findings. If no subagent tool is available, load and apply the lenses
+inline in sequence — same merged list, no parallelism.
 
 De-duplicate and rank the merged findings by severity, then attach each to the
 queue item it lands on, tagged by its `source` skill name as provenance. These
@@ -240,7 +248,8 @@ for the reviewer to proceed. Then continue to step 7.
 Read `references/interaction-protocol.md` and follow it. In short, for **each**
 queue item, in order:
 
-1. **Present the change** with a running counter ("Change 2 of 6"). Lead with a
+1. **Present the change** with a running counter ("Change 2 of M", where M is the
+   full queue length — not a fixed number). Lead with a
    one-sentence "what this is", then (comment mode) why it exists, what uses it /
    who calls it, who consumes the result, then what could be improved. In fix
    mode, trim the explanatory beats to just what makes the fix safe.

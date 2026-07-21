@@ -25,8 +25,9 @@ its description happens to spell out "diff" or "emits findings." Descriptions
 vary in verbosity: a terse one like "Code Review Guidelines" is as much a review
 lens as a paragraph-long one — **when a tool reads as a code-review tool at all,
 include it.** Today that typically pulls in general code/adversarial review,
-security review, standards/spec review, any project-specific review skill, and —
-**when it is installed** — the builtin `code-review` command. But **select by
+security review, standards/spec review, code-quality/simplification review (e.g.
+`simplify`), any project-specific review skill, and — **when it is installed** —
+the builtin `code-review` command. But **select by
 what the tool is, not by a fixed list**, so new review lenses are picked up
 automatically and removed ones drop out.
 
@@ -44,11 +45,14 @@ Look in two places, because lenses ship in two forms:
   is found. It is applied by **reading that file and following its methodology**,
   not by invoking the command (see Spawning for why).
 
-The builtin `code-review` differs from a skill lens in three ways, all handled at
-spawn time:
+The builtin `code-review` differs from a skill lens in how it is applied, all
+handled at spawn time:
 
-- It is **PR-only** — it needs a pull request and links GitHub blob URLs, so it
-  has no meaning in **fix mode**. **Skip it entirely in fix mode.**
+- Its **PR dependency lives only in its reporting steps** — linking GitHub blob
+  URLs and posting the comment. Because a lens strips those steps anyway (below),
+  its diff-based methodology applies in **both modes**: feed it the fix-mode diff
+  as scope and it reviews the local changes with no PR present. (Earlier versions
+  skipped it in fix mode; that was unnecessary once the reporting is stripped.)
 - Its own instructions **bail early** (closed/draft/already-reviewed PR) and
   **filter out any issue scoring below its confidence threshold** before
   reporting. For a *lens* we want the raw scored issues, so neither gate applies —
@@ -64,8 +68,11 @@ handled at the merge step, not by pruning lenses here.
 Exclude only:
 
 - **`interactive-code-review` itself** — no recursion.
-- Tools that don't review code — diagnosis, verification, simplification,
-  run/build, authoring/scaffolding helpers, etc. They critique nothing.
+- Tools that don't review code — diagnosis, verification, run/build,
+  authoring/scaffolding helpers, etc. They critique nothing. (A tool that
+  *reviews* code quality and then offers to apply the change — e.g. `simplify` —
+  is a review lens, not a transformation tool: include it and take only its
+  findings. See Spawning.)
 
 ## Applicability — let each lens self-gate
 
@@ -100,7 +107,13 @@ Use the `general-purpose` subagent type. Each prompt must:
   vocabulary, attack surface, style rules. How the subagent loads it depends on
   what the lens is:
   - a **skill** — invoke it via the `Skill` tool. **Do not** vendor a copy of a
-    skill by reading its files; use the tool.
+    skill by reading its files; use the tool. Invoking a skill loads its
+    instructions for the subagent to follow, so the subagent stays in control of
+    where to stop: if the skill's methodology ends by *applying* a change (e.g.
+    `simplify`, which reviews for quality and then fixes), **stop at the
+    finding** — capture the change it would make as `suggested_fix` and return
+    it, applying nothing. That apply-step is exactly the "act" the return-only
+    rule below forbids.
   - the builtin **`code-review` command** — **read its instruction file** (the
     path found during discovery) and follow its review methodology, but **stop
     short of the reporting/side-effect steps**: do *not* run its early-exit
@@ -134,7 +147,11 @@ Use the `general-purpose` subagent type. Each prompt must:
   list and nothing else. The interactive session is the only thing that posts (or,
   in fix mode, edits). This is the reason the `code-review` command is applied by
   reading its file and skipping its final steps rather than run as a command: run
-  whole, it would comment on the PR before the reviewer has approved anything.
+  whole, it would comment on the PR before the reviewer has approved anything. A
+  skill whose methodology ends in an edit (`simplify`) is held to the same rule
+  the other way around: it is still invoked via the `Skill` tool (there is no
+  file to read — it is builtin), but the subagent follows the loaded instructions
+  only up to the proposed change and returns it as `suggested_fix`.
 
 Ask the agent to also return its one-line ship/no-ship headline, but the
 structured list is what you consume. A lens that itself fans out into further
