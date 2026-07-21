@@ -1,17 +1,34 @@
 ---
 name: interactive-code-review
 description: >-
-  Walk through a net branch or working-tree diff one logical change at a time.
-  Use COMMENT mode for someone else's PR or branch: explain intent, callers,
-  consumers, and tests to a reviewer unfamiliar with the code, then offer and
-  post GitHub comment options. Use FIX mode for local code: propose, apply, and
-  verify each fix. Open with a whole-change overview and verdict, skip
-  bookkeeping noise, and inspect commit history only to recover intent. Fan out
-  across relevant installed review skills and merge their findings, including
-  correctness, AI slop, refactoring, duplication, and dead code. Use when the
-  user asks for an interactive PR, branch, commit-by-commit, or local-change
-  review; says "grill me on this diff"; wants GitHub review comments; or asks to
-  review local changes and fix the problems.
+  Walk a reviewer through a change set one change at a time, interactively —
+  like a guided, grill-me-style review session rather than a static report.
+  Runs in one of two modes. COMMENT mode (reviewing someone else's PR/branch):
+  for each change it explains, to someone UNFAMILIAR with the codebase, what the
+  change is, why it exists, what uses it and who consumes the result, then offers
+  three ready-to-post comment options and posts the chosen one to GitHub. FIX
+  mode (reviewing code local to this machine that you intend to fix): for each
+  change it gives just enough context to fix safely, then proposes and applies
+  the fix locally, verifying after each edit. It auto-detects the mode and states
+  it; you can override in a word. It opens with a whole-PR overview and a
+  high-level verdict (a justification or critique of the change as a whole,
+  including cross-cutting concerns) before walking the changes one at a time.
+  Either way the goal is to improve the software's long-run quality, so the
+  review also hunts for AI slop, refactoring and abstraction opportunities, and
+  dead code — not just bugs. The review itself
+  fans out to a parallel subagent per relevant review lens installed in the
+  environment — skills and commands like the builtin code-review, discovered at
+  review time, not a fixed set — each loading and applying that lens, merged into
+  one findings list. It reviews the NET
+  diff (default: against origin/main; fix mode also includes uncommitted
+  working-tree changes), going commit by commit to explain intent while ignoring
+  changes that later commits undid, and skips bookkeeping noise. In a GUI it
+  renders an HTML card per change. Use this whenever the user wants to review a
+  PR or branch interactively, be walked through changes one by one, "grill me on
+  this diff", review commit by commit, review against origin/main, draft and post
+  GitHub review comments, OR walk through local changes and fix the problems
+  ("fix the problems", "review my local changes and fix them") — even if they
+  don't say "interactive".
 ---
 
 # Interactive Code Review
@@ -55,8 +72,9 @@ it:
   how to gather context (definitions, callers, consumers, tests); how much
   context depends on the mode.
 - `references/multi-agent-review.md` — the fan-out: **discover every relevant
-  installed review skill → one subagent loads and applies each → one merged
-  findings list**, plus applicability detection.
+  installed review lens (skills *and* commands like `/code-review`) → one subagent
+  loads and applies each → one merged findings list**, plus applicability
+  detection.
 - `references/adversarial-review.md` — how to turn findings into good comments
   (severity calibration, question-vs-accusation, praise) and the solo checklist
   for when no review skill can be loaded at all.
@@ -164,22 +182,31 @@ real `path:line`.
 ### 5. Review with the multi-agent fan-out → "what could be improved"
 
 Read `references/multi-agent-review.md` and run the fan-out **once over the whole
-change set**: discover every relevant review skill installed in the environment
-and spawn a parallel subagent per skill that **loads and applies it** (via the
-`Skill` tool), whose findings all merge into **one list**. It covers correctness
+change set**: discover every relevant review lens installed in the environment —
+skills *and* commands like the builtin `/code-review` — and spawn a parallel
+subagent per lens that **loads and applies it** (a skill via the `Skill` tool;
+the builtin `code-review` command by reading and following its instruction file),
+whose findings all merge into **one list**. It covers correctness
 bugs *and* long-run quality (AI slop, refactor and abstraction opportunities,
 dead code, duplication) *and* conformance to standards/spec — whatever the
 available lenses cover.
 
-Discover and gate applicability first (per the reference): select review skills
-from the available-skills list by **what each skill is for** (any code-review
-lens, however terse its description), exclude `interactive-code-review` itself,
-and let each skill self-gate on its own stated domain against the repo and diff —
-biasing toward inclusion, since a standards doc (`CLAUDE.md`, etc.) is almost
-always present and overlapping general lenses de-duplicate at the merge step. Skip
-a skill only when it genuinely has no context, and say so rather than faking
-findings. If no subagent tool is available, invoke the skills inline
-in sequence — same merged list, no parallelism.
+Discover and gate applicability first (per the reference): select review lenses
+by **what each one is for** (any code-review lens, however terse its
+description). Look in two places — the available-skills list for **skills**, and
+the plugin commands directory for the builtin **`code-review` command** (which
+won't show up as a skill; find its instruction file with a glob like
+`~/.claude/plugins/**/commands/code-review.md`). Exclude `interactive-code-review`
+itself, and let each lens self-gate on its own stated domain against the repo and
+diff — biasing toward inclusion, since a standards doc (`CLAUDE.md`, etc.) is
+almost always present and overlapping general lenses de-duplicate at the merge
+step. The `code-review` command is comment-mode-only (it needs a PR): skip it in
+fix mode, and in comment mode apply it by **reading its instruction file and
+following the methodology while skipping its eligibility bail, its confidence
+filter, and its final GitHub post** — it returns findings, it never comments.
+Skip any lens that genuinely has no context, and say so rather than faking
+findings. If no subagent tool is available, load and apply the lenses inline in
+sequence — same merged list, no parallelism.
 
 De-duplicate and rank the merged findings by severity, then attach each to the
 queue item it lands on, tagged by its `source` skill name as provenance. These

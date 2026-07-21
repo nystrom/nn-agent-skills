@@ -1,9 +1,12 @@
-# Multi-agent review — load every relevant review skill, one merged findings list
+# Multi-agent review — load every relevant review lens, one merged findings list
 
-The review step fans out to **one subagent per relevant review skill installed in
-the environment**, has each subagent **load and apply that skill**, and **merges
-all their findings into a single list**. No skills are named or embedded here —
-they are discovered at review time from whatever is available.
+The review step fans out to **one subagent per relevant review lens installed in
+the environment**, has each subagent **load and apply that lens**, and **merges
+all their findings into a single list**. No lenses are named or embedded here —
+they are discovered at review time from whatever is available. A "lens" is any
+code-review tool in the environment, whether it ships as a **skill** (in the
+available-skills list) or as a **command** (a slash command such as the builtin
+`/code-review`).
 
 Subagents have the `Skill` tool and see the available-skills list, so they load
 the real installed skill rather than a vendored copy.
@@ -13,32 +16,58 @@ not per change. One agent per applicable skill per session, not `skills × N`.
 Attach each finding to the queue item it lands on so the interactive session can
 surface it at the right change.
 
-## Discover which skills to run
+## Discover which lenses to run
 
-At review time, scan the available-skills list and select the **review lenses**:
-skills whose *purpose is reviewing/critiquing/auditing code* — a PR, a branch, a
-diff, a change set, or code quality generally. Judge this by what the skill **is
-for**, not by whether its description happens to spell out "diff" or "emits
-findings." Descriptions vary in verbosity: a terse one like "Code Review
-Guidelines" is as much a review lens as a paragraph-long one — **when a skill
-reads as a code-review tool at all, include it.** Today that typically pulls in
-general code/adversarial review, security review, standards/spec review, and any
-project-specific review skill — but **select by what the skill is, not by a fixed
-list**, so new review skills are picked up automatically and removed ones drop
-out.
+At review time, select the **review lenses**: tools whose *purpose is
+reviewing/critiquing/auditing code* — a PR, a branch, a diff, a change set, or
+code quality generally. Judge this by what the tool **is for**, not by whether
+its description happens to spell out "diff" or "emits findings." Descriptions
+vary in verbosity: a terse one like "Code Review Guidelines" is as much a review
+lens as a paragraph-long one — **when a tool reads as a code-review tool at all,
+include it.** Today that typically pulls in general code/adversarial review,
+security review, standards/spec review, any project-specific review skill, and —
+**when it is installed** — the builtin `code-review` command. But **select by
+what the tool is, not by a fixed list**, so new review lenses are picked up
+automatically and removed ones drop out.
+
+Look in two places, because lenses ship in two forms:
+
+- **Skills** — scan the available-skills list. These are loaded via the `Skill`
+  tool.
+- **Commands** — the builtin `code-review` ships as a slash command, not a skill,
+  so it is *not* in the available-skills list. If the environment surfaces slash
+  commands to you, check there; but do not rely on that — locate its instruction
+  file directly with a best-effort glob such as
+  `~/.claude/plugins/**/commands/code-review.md` (several may match across
+  marketplaces; prefer the official `code-review` plugin, and confirm the file's
+  own frontmatter reads as a code-review command). Include it whenever such a file
+  is found. It is applied by **reading that file and following its methodology**,
+  not by invoking the command (see Spawning for why).
+
+The builtin `code-review` differs from a skill lens in three ways, all handled at
+spawn time:
+
+- It is **PR-only** — it needs a pull request and links GitHub blob URLs, so it
+  has no meaning in **fix mode**. **Skip it entirely in fix mode.**
+- Its own instructions **bail early** (closed/draft/already-reviewed PR) and
+  **filter out any issue scoring below its confidence threshold** before
+  reporting. For a *lens* we want the raw scored issues, so neither gate applies —
+  don't abort, and surface every scored issue (see Spawning).
+- Its final step **posts a comment to the PR** via `gh`. That must not happen
+  here — the interactive session is the only thing that posts (see Spawning).
 
 Bias toward inclusion: an extra general lens costs one parallel subagent and its
 findings merge (and de-duplicate) with the rest, so a borderline "is this a
-review skill?" resolves to **yes**. Overlap between general lenses is expected and
+review tool?" resolves to **yes**. Overlap between general lenses is expected and
 handled at the merge step, not by pruning lenses here.
 
 Exclude only:
 
 - **`interactive-code-review` itself** — no recursion.
-- Skills that don't review code — diagnosis, verification, simplification,
+- Tools that don't review code — diagnosis, verification, simplification,
   run/build, authoring/scaffolding helpers, etc. They critique nothing.
 
-## Applicability — let each skill self-gate
+## Applicability — let each lens self-gate
 
 Drive applicability off **each skill's own stated domain**, not a hardcoded
 per-skill table. A skill scoped to a particular toolchain, language, or file kind
@@ -57,7 +86,7 @@ only the standards source exists, run the standards axis and note the spec axis
 as unavailable (and vice versa). Only skip such a lens outright when *neither* a
 standards doc nor a spec/issue can be found.
 
-State which skills ran and which were skipped and why; don't invent findings to
+State which lenses ran and which were skipped and why; don't invent findings to
 fill a lens that had no context. It is normal for only the general lens(es) to
 apply in a plain repo.
 
@@ -66,13 +95,26 @@ apply in a plain repo.
 Send **one message with all applicable `Agent` calls** so they run in parallel.
 Use the `general-purpose` subagent type. Each prompt must:
 
-- Name the **one skill this subagent owns** and instruct it to **invoke that
-  skill via the `Skill` tool** and apply the skill's own methodology and
-  judgement — its finding bar, severity vocabulary, attack surface, style rules.
+- Name the **one lens this subagent owns** and instruct it to **load and apply**
+  that lens, using its own methodology and judgement — its finding bar, severity
+  vocabulary, attack surface, style rules. How the subagent loads it depends on
+  what the lens is:
+  - a **skill** — invoke it via the `Skill` tool. **Do not** vendor a copy of a
+    skill by reading its files; use the tool.
+  - the builtin **`code-review` command** — **read its instruction file** (the
+    path found during discovery) and follow its review methodology, but **stop
+    short of the reporting/side-effect steps**: do *not* run its early-exit
+    eligibility gate as a reason to produce nothing, do *not* apply its
+    confidence-threshold filter (surface every issue it scores, carrying the
+    score into the finding's `note`), and make **no `gh` calls / open no
+    comments**. Running the command as a black box (via a `SlashCommand` tool)
+    would execute all of those steps — the threshold filter and the final GitHub
+    post — and hand back a rendered PR comment instead of structured findings, so
+    do not invoke it that way; read-and-apply is the only path for this lens.
 - Include the **scope command** from step 1 (comment mode:
   `git diff origin/main...HEAD`; fix mode: the merge-base-to-working-tree diff)
   and the commit list.
-- **Override the skill's native output format.** Review skills natively emit prose
+- **Override the lens's native output format.** Review lenses natively emit prose
   (Summary/Must-fix/Suggestions, ship/no-ship blobs). That prose can't be
   attached to per-change queue items, so require a structured per-finding list
   instead, one object per finding:
@@ -81,17 +123,24 @@ Use the `general-purpose` subagent type. Each prompt must:
   { source, path, line, severity, note, suggested_fix }
   ```
 
-  - `source` — the **name of the skill** that produced the finding (e.g. the
-    skill slug). This is provenance for the reader; everything still lands in one
-    merged list.
+  - `source` — the **name of the lens** that produced the finding (e.g. the
+    skill slug or command name). This is provenance for the reader; everything
+    still lands in one merged list.
   - `line` — new-file line number, or `null` for a file-/design-level finding.
   - `suggested_fix` — the concrete change (required in fix mode; the smallest edit
     that resolves it).
+- **A lens must only *return* findings — never act.** No subagent may post to
+  GitHub, edit files, or take any other side effect; it hands back the structured
+  list and nothing else. The interactive session is the only thing that posts (or,
+  in fix mode, edits). This is the reason the `code-review` command is applied by
+  reading its file and skipping its final steps rather than run as a command: run
+  whole, it would comment on the PR before the reviewer has approved anything.
 
 Ask the agent to also return its one-line ship/no-ship headline, but the
-structured list is what you consume. A review skill that itself fans out into
-further sub-agents (e.g. a standards+spec lens splitting into two axes) is fine —
-you spawn it as one agent and it returns findings tagged by `source`.
+structured list is what you consume. A lens that itself fans out into further
+sub-agents (e.g. a standards+spec lens splitting into two axes, or `/code-review`
+spawning its own audit agents) is fine — you spawn it as one agent and it returns
+findings tagged by `source`.
 
 ## Merging into one list
 
@@ -118,8 +167,11 @@ verify it during the session.
 ## Fallback — no subagent tool available
 
 If the environment can't spawn subagents (e.g. a plain terminal with no `Agent`
-tool), do the review inline: **invoke each applicable review skill yourself via
-the `Skill` tool** in sequence, then merge into the same single list. The output
-is the same; only the parallelism is lost. Never silently drop a lens — if you
-skip one, say why. If even the `Skill` tool is unavailable, fall back to the
-solo checklist in `adversarial-review.md`.
+tool), do the review inline: **load and apply each applicable review lens
+yourself** in sequence — skills via the `Skill` tool, the builtin `code-review`
+command by reading its instruction file and following its methodology (skipping
+the eligibility bail, the confidence filter, and the GitHub post, exactly as
+above) — then merge into the same single list. The output is the same; only the
+parallelism is lost. Never silently drop a lens — if you skip one, say why. If
+even the `Skill` tool is unavailable, fall back to the solo checklist in
+`adversarial-review.md`.
