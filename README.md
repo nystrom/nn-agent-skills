@@ -1,4 +1,4 @@
-# agent-skills
+# nn-agent-skills
 
 Installable agent skills and plugins for Claude Code, Codex, and `agy`.
 
@@ -39,17 +39,17 @@ depending on Claude's stop hook.
 Add this marketplace, then install the plugin you want:
 
 ```
-/plugin marketplace add nystrom/agent-skills
-/plugin install interactive-code-review@agent-skills
-/plugin install evolve@agent-skills
+/plugin marketplace add nystrom/nn-agent-skills
+/plugin install interactive-code-review@nn-agent-skills
+/plugin install evolve@nn-agent-skills
 ```
 
 Or from the terminal:
 
 ```bash
-claude plugin marketplace add nystrom/agent-skills
-claude plugin install interactive-code-review@agent-skills
-claude plugin install evolve@agent-skills
+claude plugin marketplace add nystrom/nn-agent-skills
+claude plugin install interactive-code-review@nn-agent-skills
+claude plugin install evolve@nn-agent-skills
 ```
 
 Once installed, invoke it by asking Claude Code to review a PR or branch
@@ -61,9 +61,9 @@ for examples and requirements.
 ## Install with Codex
 
 ```bash
-codex plugin marketplace add nystrom/agent-skills
-codex plugin add interactive-code-review@agent-skills
-codex plugin add evolve@agent-skills
+codex plugin marketplace add nystrom/nn-agent-skills
+codex plugin add interactive-code-review@nn-agent-skills
+codex plugin add evolve@nn-agent-skills
 ```
 
 Invoke the skills as `$interactive-code-review` and `$evolve`, or describe a
@@ -74,13 +74,13 @@ matching task and let Codex select the skill.
 `agy` installs every plugin in the repository in one operation:
 
 ```bash
-git clone https://github.com/nystrom/agent-skills.git
-agy plugin install ./agent-skills
+git clone https://github.com/nystrom/nn-agent-skills.git
+agy plugin install ./nn-agent-skills
 ```
 
 To install only one plugin, pass its directory instead:
 
 ```bash
-agy plugin install ./agent-skills/plugins/evolve
-agy plugin install ./agent-skills/plugins/interactive-code-review
+agy plugin install ./nn-agent-skills/plugins/evolve
+agy plugin install ./nn-agent-skills/plugins/interactive-code-review
 ```

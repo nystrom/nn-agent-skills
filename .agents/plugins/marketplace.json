@@ -1,5 +1,5 @@
 {
-  "name": "agent-skills",
+  "name": "nn-agent-skills",
   "interface": {
     "displayName": "Agent Skills"
   },

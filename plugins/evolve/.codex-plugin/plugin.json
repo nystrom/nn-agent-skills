@@ -6,8 +6,8 @@
     "name": "nystrom",
     "url": "https://github.com/nystrom"
   },
-  "homepage": "https://github.com/nystrom/agent-skills/tree/main/plugins/evolve",
-  "repository": "https://github.com/nystrom/agent-skills",
+  "homepage": "https://github.com/nystrom/nn-agent-skills/tree/main/plugins/evolve",
+  "repository": "https://github.com/nystrom/nn-agent-skills",
   "license": "MIT",
   "keywords": ["evolution", "optimization", "genetic", "benchmarking", "performance"],
   "skills": "./skills/",
@@ -18,7 +18,7 @@
     "developerName": "nystrom",
     "category": "Developer Tools",
     "capabilities": ["Interactive", "Read", "Write"],
-    "websiteURL": "https://github.com/nystrom/agent-skills/tree/main/plugins/evolve",
+    "websiteURL": "https://github.com/nystrom/nn-agent-skills/tree/main/plugins/evolve",
     "defaultPrompt": [
       "Optimize this function against a benchmark with Evolve.",
       "Show the status of the current Evolve run."

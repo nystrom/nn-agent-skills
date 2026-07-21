@@ -6,8 +6,8 @@
     "name": "nystrom",
     "url": "https://github.com/nystrom"
   },
-  "homepage": "https://github.com/nystrom/agent-skills/tree/main/plugins/interactive-code-review",
-  "repository": "https://github.com/nystrom/agent-skills",
+  "homepage": "https://github.com/nystrom/nn-agent-skills/tree/main/plugins/interactive-code-review",
+  "repository": "https://github.com/nystrom/nn-agent-skills",
   "license": "MIT",
   "keywords": ["code-review", "github", "interactive", "refactoring"],
   "skills": "./skills/",
@@ -18,7 +18,7 @@
     "developerName": "nystrom",
     "category": "Developer Tools",
     "capabilities": ["Interactive", "Read", "Write"],
-    "websiteURL": "https://github.com/nystrom/agent-skills/tree/main/plugins/interactive-code-review",
+    "websiteURL": "https://github.com/nystrom/nn-agent-skills/tree/main/plugins/interactive-code-review",
     "defaultPrompt": [
       "Review this branch interactively, one change at a time.",
       "Review my local changes and fix the problems."

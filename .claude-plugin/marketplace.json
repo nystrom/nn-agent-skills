@@ -1,5 +1,5 @@
 {
-  "name": "agent-skills",
+  "name": "nn-agent-skills",
   "description": "A collection of installable Claude Code plugins and agent skills.",
   "owner": {
     "name": "nystrom"

@@ -5,8 +5,8 @@
   "author": {
     "name": "nystrom"
   },
-  "homepage": "https://github.com/nystrom/agent-skills/tree/main/plugins/evolve",
-  "repository": "https://github.com/nystrom/agent-skills",
+  "homepage": "https://github.com/nystrom/nn-agent-skills/tree/main/plugins/evolve",
+  "repository": "https://github.com/nystrom/nn-agent-skills",
   "license": "MIT",
   "keywords": ["evolution", "optimization", "genetic", "worktree", "performance"]
 }

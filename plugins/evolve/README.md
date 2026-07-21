@@ -31,18 +31,18 @@ Each iteration:
 
 ### Claude Code
 
-Install it from the `nystrom/agent-skills` marketplace:
+Install it from the `nystrom/nn-agent-skills` marketplace:
 
 ```
-/plugin marketplace add nystrom/agent-skills
-/plugin install evolve@agent-skills
+/plugin marketplace add nystrom/nn-agent-skills
+/plugin install evolve@nn-agent-skills
 ```
 
-Or, from a local checkout of `agent-skills`:
+Or, from a local checkout of `nn-agent-skills`:
 
 ```
 /plugin marketplace add ./
-/plugin install evolve@agent-skills
+/plugin install evolve@nn-agent-skills
 ```
 
 Commands are namespaced under the plugin: `/evolve:evolve`,
@@ -63,8 +63,8 @@ claude plugin validate ./plugins/evolve --strict
 ### Codex
 
 ```bash
-codex plugin marketplace add nystrom/agent-skills
-codex plugin add evolve@agent-skills
+codex plugin marketplace add nystrom/nn-agent-skills
+codex plugin add evolve@nn-agent-skills
 ```
 
 Invoke `$evolve` or ask Codex to optimize a target against a measurable fitness
@@ -72,7 +72,7 @@ function. The native Codex skill drives the iteration loop directly.
 
 ### agy
 
-From a checkout of `agent-skills`:
+From a checkout of `nn-agent-skills`:
 
 ```bash
 agy plugin install ./plugins/evolve
