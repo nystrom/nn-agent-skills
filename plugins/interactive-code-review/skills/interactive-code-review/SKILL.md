@@ -66,7 +66,7 @@ work:
 Everything else is shared. Read each resource as you reach the step that needs
 it:
 
-- `references/change-classification.md` — important vs. routine (what to review
+- `references/change-classification.md` — semantic vs. routine (what to walk
   vs. what to summarize as bookkeeping).
 - `references/net-diff-and-context.md` — the net-diff/commit reasoning **and**
   how to gather context (definitions, callers, consumers, tests); how much
@@ -140,22 +140,34 @@ the *intent* behind each surviving change. Then classify against the **net**
 diff from step 1 — anything added and later reverted simply isn't in it, so it
 is correctly out of scope. Do not review intermediate states.
 
-### 3. Classify: important vs. bookkeeping
+### 3. Classify: semantic vs. bookkeeping
 
-Apply `references/change-classification.md`. Keep the **important** changes (logic, control
-flow, interfaces, concurrency, security, behavior-changing config, behavior
-deletions). Collapse **bookkeeping** — whitespace/reformat, import shuffles,
-pure renames, moved-unchanged code, generated files/lockfiles, snapshot text,
-comment-only edits — into a short "skipped" list you mention once, then never
-bring up again. The reviewer's attention is the scarce resource.
+Apply `references/change-classification.md`. Keep the **semantic** changes — the
+ones that change what the code does (logic, control flow, interfaces,
+concurrency, security, behavior-changing config, behavior deletions). Collapse
+**bookkeeping** — whitespace/reformat, import shuffles, pure renames,
+moved-unchanged code, generated files/lockfiles, snapshot text, comment-only
+edits — into a short "skipped" list you mention once, then never bring up again.
+Those two buckets are exhaustive: a change is either semantic or it matches a
+bookkeeping category in the reference. "Not worth reviewing" is not a third
+bucket. The one collapse that spans both is the repeated mechanical edit
+(`foo()` → `self.foo()` across 30 call sites): queue one representative
+instance and summarize the identical remainder with its count, per the
+"Borderline calls" section of the reference. That applies only when the sites
+really are identical — any site that differs is its own queue item.
 
-Order the surviving important changes into a review queue. Group by logical
+Order the surviving semantic changes into a review queue. Group by logical
 change, not by file: one reviewable idea = one queue item, even across files.
-**There is no cap on the queue length** — it holds *every* important change,
+**There is no cap on the queue length** — it holds *every* semantic change,
 whether that is 2 or 30. Never truncate to a "top N" or a round number, and never
 drop a real change to keep the session short; only bookkeeping (above) is
-collapsed. The counter total `M` is simply however many important changes there
+collapsed. The counter total `M` is simply however many semantic changes there
 are.
+
+**The queue is final here.** Later steps attach findings to queue items; they
+never add or remove one. Whether a review lens flagged something has no bearing
+on whether a change is walked — a correct, uncontroversial change is still a
+change the reviewer walks through.
 
 ### 4. For each change, gather context
 
@@ -220,7 +232,9 @@ De-duplicate and rank the merged findings by severity, then attach each to the
 queue item it lands on, tagged by its `source` skill name as provenance. These
 become the reviewer's talking points and seed the per-change action (comment
 options in comment mode, proposed fixes in fix mode). File real concerns only — a
-change with none gets an honest "nothing jumps out" and moves on.
+change that collects no findings gets an honest "nothing jumps out" **and still
+gets its own turn in step 7**, presented like any other. Findings are one beat of
+a change's briefing, not the reason it is in the queue.
 
 ### 6. Open with a whole-PR overview and verdict
 
@@ -231,8 +245,11 @@ section of `references/interaction-protocol.md`. It has three parts:
 - **What this PR does** — the overall intent across all commits, in 2–4
   sentences, synthesized from the commit walk (step 2) and the net diff, not a
   file-by-file list.
-- **Scope** — the count of important changes queued and the one-line bookkeeping
+- **Scope** — the count of semantic changes queued and the one-line bookkeeping
   summary of what's skipped, so the reviewer knows the shape of what's coming.
+  Say plainly that all `M` get a turn, including the ones nothing was flagged
+  on. Do not pre-announce a subset ("3 of these need attention") as if it were
+  the walk.
 - **High-level verdict** — a justification *or* a critique of the change as a
   whole: does the PR, taken together, earn its place? Call out cross-cutting
   concerns that no single change owns — architectural direction, missing tests
@@ -246,7 +263,11 @@ for the reviewer to proceed. Then continue to step 7.
 ### 7. Run the interactive session — one change at a time
 
 Read `references/interaction-protocol.md` and follow it. In short, for **each**
-queue item, in order:
+queue item, in order — every one of the `M`, including the ones no lens flagged.
+A clean change gets the same turn shape as a flagged one — the full briefing in
+comment mode, the trimmed one in fix mode. The briefing's job is to orient a
+reviewer who has never seen the code, which has nothing to do with whether a
+finding landed.
 
 1. **Present the change** with a running counter ("Change 2 of M", where M is the
    full queue length — not a fixed number). Lead with a
@@ -296,8 +317,10 @@ When the queue is exhausted, give a short recap tuned to the mode:
 
 - Keep change `id`s short and stable (`c1`, `c2`, …); the HTML card anchors
   comments to new-file line numbers.
-- Never silently drop a change — if it's not worth reviewing, it belongs in the
-  one-line bookkeeping summary.
+- Never drop a change. The only changes that skip the walk are the ones matching
+  a bookkeeping category in `references/change-classification.md`, and they go in
+  the one-line summary. A semantic change is never omitted for being small,
+  obvious, or free of findings.
 - Respect the reviewer's pace: one change per turn, always waiting for input
   before advancing. The value is a guided conversation, not a data dump.
 - In fix mode, verification is part of the turn, not an afterthought — an applied

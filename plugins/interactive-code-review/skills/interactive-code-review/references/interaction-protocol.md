@@ -19,9 +19,11 @@ diff — the story of the change, not a file-by-file enumeration. If the branch 
 really two unrelated changes wearing one PR, say that here.
 
 ### 2. Scope
-One or two lines: how many important changes are queued (`N changes to walk`) and
+One or two lines: how many semantic changes are queued (`N changes to walk`) and
 the one-line bookkeeping summary of what's being skipped. This is the only place
-the bookkeeping summary is stated; never repeat it later.
+the bookkeeping summary is stated; never repeat it later. The queue is every
+semantic change, so `N` is the number of turns coming — not a shortlist of the
+problematic ones.
 
 ### 3. High-level verdict
 Take a position on the change *as a whole* — a justification if it earns its
@@ -45,7 +47,9 @@ wait for the reviewer before presenting Change 1.
 
 ## The per-change turn
 
-For each item in the review queue, in order, produce **one** message:
+For each item in the review queue, in order, produce **one** message. Every queue
+item gets a turn, whether or not the fan-out landed a finding on it; a clean
+change is presented the same way, with an honest "nothing jumps out" in beat 3.
 
 ### 1. Header
 `**Change N of M — <short title>**  ·  <file(s)>  ·  <kind>`
@@ -94,7 +98,8 @@ message stays scannable; post the full version once they choose.
 
 **Fix mode** — the concrete fix, with a preview of the edit, plus alternates
 where a genuinely different approach exists. See `apply-fix.md` for how to build
-and verify these. If there's nothing to fix, say so and offer to move on.
+and verify these. If there's nothing to fix, present the change anyway, say the
+code looks right, and offer to advance — the turn still happens.
 
 ```
 How do you want to fix this?
@@ -160,6 +165,9 @@ options render exactly as the block shown above.
 ## Pacing rules
 
 - One change per turn. Always wait.
+- Walk **every** semantic change, not just the flagged ones. A change with no
+  findings is still a turn: the reviewer is being walked through the diff, not
+  through a defect list.
 - Never re-litigate the bookkeeping summary — mention it once at the start.
 - If the reviewer says "just show me everything" or "stop pausing", switch to
   presenting the remaining queue in one pass — but that's opt-in, not default.
