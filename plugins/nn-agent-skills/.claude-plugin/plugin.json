@@ -1,0 +1,12 @@
+{
+  "name": "nn-agent-skills",
+  "version": "1.0.0",
+  "description": "Guided code review one change at a time in the terminal, or the whole review as one HTML page, plus an LLM-driven evolutionary code optimizer.",
+  "author": {
+    "name": "nystrom"
+  },
+  "homepage": "https://github.com/nystrom/nn-agent-skills",
+  "repository": "https://github.com/nystrom/nn-agent-skills",
+  "license": "MIT",
+  "keywords": ["code-review", "github", "interactive", "refactoring", "evolution", "optimization", "worktree", "performance"]
+}

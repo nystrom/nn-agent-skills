@@ -61,13 +61,12 @@ noise in the review is as bad as noise in the diff.
 Also call out what's **good** with a `praise` comment where warranted — it
 tells the author what to keep doing and signals you actually read it.
 
-## Fix mode: from finding to fix
+## From finding to suggested fix
 
-In fix mode each finding should carry a concrete fix, not just a critique — that
-fix is what you'll preview and apply. Prefer the smallest change that resolves
-the finding. For a refactor or abstraction, state the target shape before
-editing so the reviewer can veto the direction. See `apply-fix.md` for applying
-and verifying.
+A finding is stronger with a concrete fix attached than as a critique alone, so
+carry the lens's `suggested_fix` into the page whenever it has one. Prefer the
+smallest change that resolves the finding. For a refactor or abstraction, state
+the target shape. Nothing is applied — the reader decides.
 
 ## Writing good comments
 

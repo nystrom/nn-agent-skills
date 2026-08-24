@@ -1,9 +1,8 @@
 # Review JSON schema
 
-This is the base per-change shape. In this skill the web UI consumes a
-**superset** of it — the same `changes[]` entries plus a few web-only fields
-(`diff_nows`, `briefing`, `status`, `overview`, `mode`, `current`) — served live
-by `scripts/serve_review.py` and rendered by `scripts/render_app.py`. See
+This is the base per-change shape. In this skill the page consumes a **superset**
+of it — the same `changes[]` entries plus `diff_nows`, `briefing`, and the
+top-level `overview` — rendered by `scripts/render_app.py`. See
 `references/web-presentation.md` for the full state model; the field notes below
 (diff format, `line` anchoring, severity vocabulary) apply unchanged.
 
@@ -13,7 +12,7 @@ by `scripts/serve_review.py` and rendered by `scripts/render_app.py`. See
 {
   "title": "string — headline for the review",
   "scope": "string — e.g. 'git diff main...HEAD  (12 files, +340 -88)'",
-  "generated_at": "string, optional — script fills current time if omitted",
+  "generated_at": "string, optional — shown in the top bar; the caller supplies it",
 
   "summary": {
     "files_changed": 12,          // optional int

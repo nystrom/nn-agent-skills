@@ -45,19 +45,19 @@ Or, from a local checkout of `nn-agent-skills`:
 /plugin install evolve@nn-agent-skills
 ```
 
-Commands are namespaced under the plugin: `/evolve:evolve`,
-`/evolve:evolve-status`, `/evolve:evolve-stop`.
+Commands are namespaced under the plugin: `/nn-agent-skills:evolve`,
+`/nn-agent-skills:evolve-status`, `/nn-agent-skills:evolve-stop`.
 
 To hack on it without installing, load the plugin directory directly:
 
 ```bash
-claude --plugin-dir ./plugins/evolve
+claude --plugin-dir ./plugins/nn-agent-skills
 ```
 
 Validate manifest changes before publishing:
 
 ```bash
-claude plugin validate ./plugins/evolve --strict
+claude plugin validate ./plugins/nn-agent-skills --strict
 ```
 
 ### Codex
@@ -75,7 +75,7 @@ function. The native Codex skill drives the iteration loop directly.
 From a checkout of `nn-agent-skills`:
 
 ```bash
-agy plugin install ./plugins/evolve
+agy plugin install ./plugins/nn-agent-skills
 ```
 
 `agy` imports the Evolve commands as skills and also installs its agents and
@@ -94,20 +94,20 @@ In Claude Code, use the namespaced commands:
 
 ```bash
 # Start an evolution run
-/evolve:evolve "the sort() function in src/sort.ts" \
+/nn-agent-skills:evolve "the sort() function in src/sort.ts" \
   --fitness "run make bench and maximize ops/sec"
 
 # With options
-/evolve:evolve "the query builder in db/query.go" \
+/nn-agent-skills:evolve "the query builder in db/query.go" \
   --fitness "go test -bench=BenchmarkQuery and minimize ns/op" \
   --branch main \
   --iterations 20
 
 # Check progress during a run
-/evolve:evolve-status
+/nn-agent-skills:evolve-status
 
 # Stop early (prompts to apply best result)
-/evolve:evolve-stop
+/nn-agent-skills:evolve-stop
 ```
 
 In Codex or `agy`, invoke the installed Evolve skill or ask naturally, for

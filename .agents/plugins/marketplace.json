@@ -5,22 +5,10 @@
   },
   "plugins": [
     {
-      "name": "interactive-code-review",
+      "name": "nn-agent-skills",
       "source": {
         "source": "local",
-        "path": "./plugins/interactive-code-review"
-      },
-      "policy": {
-        "installation": "AVAILABLE",
-        "authentication": "ON_INSTALL"
-      },
-      "category": "Developer Tools"
-    },
-    {
-      "name": "evolve",
-      "source": {
-        "source": "local",
-        "path": "./plugins/evolve"
+        "path": "./plugins/nn-agent-skills"
       },
       "policy": {
         "installation": "AVAILABLE",

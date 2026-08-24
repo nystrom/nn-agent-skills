@@ -203,7 +203,8 @@ change set**: discover every relevant review lens installed in the environment �
 skills *and* commands like the builtin `/code-review` — and spawn a parallel
 subagent per lens that **loads and applies it** (a skill via the `Skill` tool;
 the builtin `code-review` command by reading and following its instruction file),
-whose findings all merge into **one list**. It covers correctness
+whose findings all merge into **one list**. Every lens subagent runs on Sonnet
+(`model: "sonnet"`), not the model driving the review. It covers correctness
 bugs *and* long-run quality (AI slop, refactor and abstraction opportunities,
 dead code, duplication) *and* conformance to standards/spec — whatever the
 available lenses cover.

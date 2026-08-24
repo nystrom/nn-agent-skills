@@ -100,7 +100,9 @@ apply in a plain repo.
 ## Spawning
 
 Send **one message with all applicable `Agent` calls** so they run in parallel.
-Use the `general-purpose` subagent type. Each prompt must:
+Use the `general-purpose` subagent type and pass `model: "sonnet"` on every
+call, so lens work runs on Sonnet regardless of the model driving the review.
+Each prompt must:
 
 - Name the **one lens this subagent owns** and instruct it to **load and apply**
   that lens, using its own methodology and judgement — its finding bar, severity
@@ -175,7 +177,9 @@ Collect the findings from every agent into a **single list**. Then:
 Each queue item's **"what could be improved"** is the merged findings that landed
 on it, each tagged by its `source` skill name so the reviewer knows which lens
 produced it. A change with no findings from any skill gets an honest "nothing
-jumps out."
+jumps out" — and is still walked. The findings decide what a change's briefing
+says, never which changes the reviewer sees; the queue was fixed before this
+fan-out ran.
 
 In **fix mode**, every finding should still carry a concrete fix (per
 `apply-fix.md`) — the subagents propose the change; you preview, apply, and

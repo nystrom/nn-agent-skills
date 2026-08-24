@@ -13,8 +13,8 @@ the real installed skill rather than a vendored copy.
 
 Run the fan-out **once, up front** (SKILL.md step 5), over the whole change set —
 not per change. One agent per applicable skill per session, not `skills × N`.
-Attach each finding to the queue item it lands on so the interactive session can
-surface it at the right change.
+Attach each finding to the queue item it lands on so it renders on the right
+change's section of the page.
 
 ## Discover which lenses to run
 
@@ -50,15 +50,15 @@ handled at spawn time:
 
 - Its **PR dependency lives only in its reporting steps** — linking GitHub blob
   URLs and posting the comment. Because a lens strips those steps anyway (below),
-  its diff-based methodology applies in **both modes**: feed it the fix-mode diff
-  as scope and it reviews the local changes with no PR present. (Earlier versions
-  skipped it in fix mode; that was unnecessary once the reporting is stripped.)
+  its diff-based methodology applies with no PR present at all: feed it the net
+  diff as scope and it reviews the local changes.
 - Its own instructions **bail early** (closed/draft/already-reviewed PR) and
   **filter out any issue scoring below its confidence threshold** before
   reporting. For a *lens* we want the raw scored issues, so neither gate applies —
   don't abort, and surface every scored issue (see Spawning).
 - Its final step **posts a comment to the PR** via `gh`. That must not happen
-  here — the interactive session is the only thing that posts (see Spawning).
+  here — this skill posts nothing and edits nothing; it writes a page (see
+  Spawning).
 
 Bias toward inclusion: an extra general lens costs one parallel subagent and its
 findings merge (and de-duplicate) with the rest, so a borderline "is this a
@@ -67,7 +67,7 @@ handled at the merge step, not by pruning lenses here.
 
 Exclude only:
 
-- **`interactive-code-review` itself** — no recursion.
+- **`ui-code-review` and `interactive-code-review`** — no recursion.
 - Tools that don't review code — diagnosis, verification, run/build,
   authoring/scaffolding helpers, etc. They critique nothing. (A tool that
   *reviews* code quality and then offers to apply the change — e.g. `simplify` —
@@ -100,7 +100,9 @@ apply in a plain repo.
 ## Spawning
 
 Send **one message with all applicable `Agent` calls** so they run in parallel.
-Use the `general-purpose` subagent type. Each prompt must:
+Use the `general-purpose` subagent type and pass `model: "sonnet"` on every
+call, so lens work runs on Sonnet regardless of the model driving the review.
+Each prompt must:
 
 - Name the **one lens this subagent owns** and instruct it to **load and apply**
   that lens, using its own methodology and judgement — its finding bar, severity
@@ -124,9 +126,8 @@ Use the `general-purpose` subagent type. Each prompt must:
     would execute all of those steps — the threshold filter and the final GitHub
     post — and hand back a rendered PR comment instead of structured findings, so
     do not invoke it that way; read-and-apply is the only path for this lens.
-- Include the **scope command** from step 1 (comment mode:
-  `git diff origin/main...HEAD`; fix mode: the merge-base-to-working-tree diff)
-  and the commit list.
+- Include the **scope command** from step 1 (the net diff against the review
+  base) and the commit list.
 - **Override the lens's native output format.** Review lenses natively emit prose
   (Summary/Must-fix/Suggestions, ship/no-ship blobs). That prose can't be
   attached to per-change queue items, so require a structured per-finding list
@@ -140,14 +141,14 @@ Use the `general-purpose` subagent type. Each prompt must:
     skill slug or command name). This is provenance for the reader; everything
     still lands in one merged list.
   - `line` — new-file line number, or `null` for a file-/design-level finding.
-  - `suggested_fix` — the concrete change (required in fix mode; the smallest edit
-    that resolves it).
+  - `suggested_fix` — the concrete change: the smallest edit that resolves it.
+    Always ask for it; it renders under the finding on the page.
 - **A lens must only *return* findings — never act.** No subagent may post to
   GitHub, edit files, or take any other side effect; it hands back the structured
-  list and nothing else. The interactive session is the only thing that posts (or,
-  in fix mode, edits). This is the reason the `code-review` command is applied by
-  reading its file and skipping its final steps rather than run as a command: run
-  whole, it would comment on the PR before the reviewer has approved anything. A
+  list and nothing else. Nothing in this skill posts or edits — the output is a
+  page the reviewer reads. This is the reason the `code-review` command is applied
+  by reading its file and skipping its final steps rather than run as a command:
+  run whole, it would comment on the PR before the reviewer has seen anything. A
   skill whose methodology ends in an edit (`simplify`) is held to the same rule
   the other way around: it is still invoked via the `Skill` tool (there is no
   file to read — it is builtin), but the subagent follows the loaded instructions
@@ -170,18 +171,18 @@ Collect the findings from every agent into a **single list**. Then:
 - **Keep the `source` tag** on each finding as provenance — it tells the reviewer
   which lens produced the finding, but it does not split the list.
 
-## Feeding the interactive session
+## Feeding the page
 
-Each queue item's **"what could be improved"** is the merged findings that landed
-on it, each tagged by its `source` skill name so the reviewer knows which lens
-produced it. A change with no findings from any skill gets an honest "nothing
-jumps out" — and is still walked. The findings decide what a change's briefing
-says, never which changes the reviewer sees; the queue was fixed before this
-fan-out ran.
+Each change section's **"what could be improved"** is the merged findings that
+landed on it, each tagged by its `source` skill name so the reader knows which
+lens produced it. A change with no findings from any skill gets an honest "nothing
+jumps out" — and still gets its own section. The findings decide what a change's
+write-up says, never which changes appear; the queue was fixed before this fan-out
+ran.
 
-In **fix mode**, every finding should still carry a concrete fix (per
-`apply-fix.md`) — the subagents propose the change; you preview, apply, and
-verify it during the session.
+The **structural** findings — the ones with no single change to attach to — go
+into the overview band's verdict and cross-cutting list instead (see
+`page-content.md`).
 
 ## Fallback — no subagent tool available
 

@@ -1,0 +1,29 @@
+{
+  "name": "nn-agent-skills",
+  "version": "1.0.0",
+  "description": "Guided code review, as a terminal walkthrough or a single HTML report, plus evolutionary code optimization against a fitness function.",
+  "author": {
+    "name": "nystrom",
+    "url": "https://github.com/nystrom"
+  },
+  "homepage": "https://github.com/nystrom/nn-agent-skills",
+  "repository": "https://github.com/nystrom/nn-agent-skills",
+  "license": "MIT",
+  "keywords": ["code-review", "github", "interactive", "refactoring", "evolution", "optimization", "benchmarking", "performance"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Agent Skills",
+    "shortDescription": "Code review walkthroughs, review reports, and evolutionary code optimization.",
+    "longDescription": "Walk a branch or working-tree diff one logical change at a time in the terminal, drafting GitHub comments or applying verified fixes — or render the whole review as one self-contained HTML page with an overview, a GitHub-style diff, and per-change findings. Also generates diverse code mutations, evaluates them in isolated worktrees, and retains the strongest verified candidates in a MAP-Elites archive.",
+    "developerName": "nystrom",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "websiteURL": "https://github.com/nystrom/nn-agent-skills",
+    "defaultPrompt": [
+      "Review this branch interactively, one change at a time.",
+      "Review this branch and give me the review as a web page.",
+      "Review my local changes and fix the problems.",
+      "Optimize this function against a benchmark with Evolve."
+    ]
+  }
+}

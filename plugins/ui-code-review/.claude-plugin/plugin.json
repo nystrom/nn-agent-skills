@@ -1,8 +1,0 @@
-{
-  "name": "ui-code-review",
-  "description": "Guided code review in a three-pane web UI — file/change sidebar, GitHub-style diff (whitespace, split/unified, old/new toggles), and a chat pane carrying the review; the diff refreshes as the agent edits.",
-  "version": "1.0.0",
-  "author": {
-    "name": "nystrom"
-  }
-}
