@@ -181,7 +181,7 @@ write-up says, never which changes appear; the queue was fixed before this fan-o
 ran.
 
 The **structural** findings — the ones with no single change to attach to — go
-into the overview band's verdict and cross-cutting list instead (see
+into the Overview tab's verdict and cross-cutting list instead (see
 `page-content.md`).
 
 ## Fallback — no subagent tool available

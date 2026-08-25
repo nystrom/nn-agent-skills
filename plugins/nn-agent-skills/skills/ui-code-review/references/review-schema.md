@@ -1,8 +1,10 @@
 # Review JSON schema
 
 This is the base per-change shape. In this skill the page consumes a **superset**
-of it — the same `changes[]` entries plus `diff_nows`, `briefing`, and the
-top-level `overview` — rendered by `scripts/render_app.py`. See
+of it — the same `changes[]` entries plus `diff_nows`, `briefing`, `diagrams`,
+`usage`, `tradeoffs`, and the top-level `overview` — rendered by
+`scripts/render_app.py`. The diagram, usage, and tradeoff specs live in
+`references/diagrams.md`. See
 `references/web-presentation.md` for the full state model; the field notes below
 (diff format, `line` anchoring, severity vocabulary) apply unchanged.
 
@@ -59,7 +61,8 @@ top-level `overview` — rendered by `scripts/render_app.py`. See
 - **`diff`** must be a real unified diff (`@@ -a,b +c,d @@` hunk headers). The
   renderer numbers lines from the hunk header, so `line` anchors in comments
   resolve correctly. Include the surrounding context lines you want shown; use
-  `git diff -U<n>` to widen.
+  `git diff -U<n>` to widen. In this skill it holds **only this change's hunks**;
+  the whole-file diff goes in `diff_all` (see `references/web-presentation.md`).
 - **`line`** refers to the *new-file* line number as it appears in the hunk —
   the number the renderer prints in the right-hand gutter. Deleted lines can't
   be anchored by `line`; use `symbol` or reference them in the body.
