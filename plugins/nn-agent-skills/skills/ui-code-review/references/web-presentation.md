@@ -7,8 +7,12 @@ The page is one stdlib-only script plus a JSON state file:
   CSS/JS inline, no CDN, no fetch, theme-aware). It opens over `file://`.
 
 ```bash
-python3 <skill>/scripts/render_app.py <workdir>/state.json -o <workdir>/review.html
+python3 <skill>/scripts/render_app.py <workdir>/state.json -o <workdir>/review.html --open
 ```
+
+`--open` shows the finished page in the reader's default browser (`open`,
+`xdg-open`, or the Windows shell, falling back to Python's `webbrowser`). Where no
+browser can be launched it says so on stderr and still leaves the file.
 
 The page has **two tabs** in the top bar:
 

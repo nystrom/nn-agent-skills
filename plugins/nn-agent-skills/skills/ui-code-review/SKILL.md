@@ -24,8 +24,9 @@ description: >-
   fetches nothing. Use this whenever the user wants a visual/web/GUI code review,
   a GitHub-like diff walkthrough, a review "in a browser", a review page or
   report they can read and share, or the interactive-code-review content without
-  the back-and-forth. For a turn-by-turn review that posts comments or applies
-  fixes, use interactive-code-review instead.
+  the back-and-forth. The finished page opens in the reader's browser on its own.
+  For a turn-by-turn review that posts comments or applies fixes, use
+  interactive-code-review instead.
 ---
 
 # UI Code Review
@@ -180,14 +181,18 @@ help), the `briefing` beats, the `context` blocks, its diagrams, usage, and
 tradeoffs, and the merged findings as `comments[]`.
 
 ```bash
-python3 <skill>/scripts/render_app.py <workdir>/state.json -o <workdir>/review.html
+python3 <skill>/scripts/render_app.py <workdir>/state.json -o <workdir>/review.html --open
 ```
 
-(Paths are relative to this skill's directory.)
+(Paths are relative to this skill's directory.) `--open` opens the finished page
+in the reader's default browser; always pass it, since the page is the review and
+they are waiting to read it.
 
 ### 8. Hand over the page
 
-Give the reader the file path and a short headline: the verdict in a sentence or
+The page is already open in the browser. Give the reader the file path — so they
+can find it again, and in case this machine could not launch a browser (the script
+says so when it could not) — and a short headline: the verdict in a sentence or
 two, and how many changes are written up against how many bookkeeping edits were
 skipped. Do not restate the review in the terminal — the page is the review. Then
 stop; there is nothing to wait for.
@@ -207,3 +212,5 @@ stop; there is nothing to wait for.
   `*italic*`, newlines). Code goes in `context[]`, not in a fenced block.
 - `scripts/render_app.py` is stdlib-only; the page is offline-safe (no CDN, no
   fetch) and theme-aware, so it can be copied or attached like any other file.
+- Rendering never fails because a browser could not be launched: `--open` reports
+  it on stderr and leaves the written page behind.

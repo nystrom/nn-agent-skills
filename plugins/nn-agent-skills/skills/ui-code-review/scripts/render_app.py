@@ -3,7 +3,7 @@
 Render the ui-code-review review page as a single self-contained HTML file.
 
 Usage:
-    python render_app.py state.json -o review.html
+    python render_app.py state.json -o review.html [--open]
 
 The page opens over `file://` — it fetches nothing and needs no server. It is
 theme-aware (light / dark) and has two tabs:
@@ -22,7 +22,10 @@ references/diagrams.md.
 """
 import argparse
 import json
+import os
+import subprocess
 import sys
+import webbrowser
 
 # Severity vocabulary. The client re-declares it in JS (below); this copy documents
 # the contract for any caller that validates state before rendering.
@@ -765,16 +768,42 @@ def build_page(state):
             .replace("__STATE__", json.dumps(state, ensure_ascii=False)))
 
 
+def open_in_browser(path):
+    """Open `path` in the reader's default browser. True if a viewer was launched.
+
+    Prefers the platform launcher over `webbrowser`, which on macOS drives
+    AppleScript and both fails and complains loudly where app launching is
+    unavailable (a sandbox, a headless box, an SSH session).
+    """
+    try:
+        if sys.platform == "darwin":
+            return subprocess.run(["open", path], capture_output=True).returncode == 0
+        if sys.platform == "win32":
+            os.startfile(path)  # noqa: S606 - the only launcher Windows offers
+            return True
+        if subprocess.run(["xdg-open", path], capture_output=True).returncode == 0:
+            return True
+    except OSError:
+        pass
+    return webbrowser.open(f"file://{path}")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Render the ui-code-review review page.")
     ap.add_argument("input", nargs="?", help="Path to state JSON (default: stdin).")
     ap.add_argument("-o", "--output", default="review.html", help="Output HTML path.")
+    ap.add_argument("--open", action="store_true", dest="open_browser",
+                    help="Open the rendered page in the default browser.")
     args = ap.parse_args()
 
     raw = open(args.input, encoding="utf-8").read() if args.input else sys.stdin.read()
     with open(args.output, "w", encoding="utf-8") as f:
         f.write(build_page(json.loads(raw)))
-    print(f"Wrote {args.output}")
+    path = os.path.abspath(args.output)
+    print(f"Wrote {args.output}", flush=True)
+    if args.open_browser and not open_in_browser(path):
+        # no browser this process can launch: the path is still the whole review
+        print(f"Could not open a browser. Open it yourself: {path}", file=sys.stderr)
 
 
 if __name__ == "__main__":
