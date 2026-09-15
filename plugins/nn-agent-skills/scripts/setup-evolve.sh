@@ -64,10 +64,10 @@ if ! git rev-parse --git-dir > /dev/null 2>&1; then
   exit 1
 fi
 
-if [[ -n "$(git status --porcelain -- ':!*.pyc' ':!__pycache__')" ]]; then
+if [[ -n "$(git status --porcelain -- ':(exclude)*.pyc' ':(exclude)__pycache__')" ]]; then
   echo "❌ Working tree has uncommitted changes." >&2
   echo "   Commit or stash them before running /evolve:" >&2
-  git status --short -- ':!*.pyc' ':!__pycache__' >&2
+  git status --short -- ':(exclude)*.pyc' ':(exclude)__pycache__' >&2
   exit 1
 fi
 
@@ -125,7 +125,9 @@ jq -n \
   }' > .evolve/state.json
 
 # ── .gitignore ────────────────────────────────────────────────────────────────
-if [[ -f ".gitignore" ]] && ! grep -q "^\.evolve" .gitignore 2>/dev/null; then
+# Create .gitignore when absent: that is exactly the case where an untracked
+# .evolve/ would otherwise dirty the tree and block the next run.
+if ! grep -qs "^\.evolve" .gitignore; then
   echo ".evolve/" >> .gitignore
 fi
 

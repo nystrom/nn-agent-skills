@@ -1,0 +1,27 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      # The gate. Deterministic and offline: no API calls, no network.
+      - name: Run the test suite
+        working-directory: plugins/nn-agent-skills
+        run: make test
+
+      # Advisory: the manifest check needs the CLI, which is not pinned here.
+      # It reports without failing the build.
+      - name: Validate the plugin manifest
+        working-directory: plugins/nn-agent-skills
+        continue-on-error: true
+        run: npx --yes @anthropic-ai/claude-code plugin validate . --strict

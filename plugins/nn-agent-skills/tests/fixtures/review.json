@@ -1,0 +1,38 @@
+{
+  "title": "Fixture review",
+  "scope": "git diff base..HEAD (1 file)",
+  "base": "origin/main",
+  "overview": {
+    "what": "OVERVIEW_WHAT",
+    "scope_line": "OVERVIEW_SCOPELINE",
+    "verdict": "OVERVIEW_VERDICT",
+    "cross_cutting": ["OVERVIEW_XCUT"]
+  },
+  "structural": [
+    {"severity": "medium", "source": "code-review", "title": "STRUCT_TITLE", "body": "STRUCT_BODY"}
+  ],
+  "summary": {
+    "files_changed": 1, "additions": 2, "deletions": 1,
+    "routine": ["ROUTINE_LINE"]
+  },
+  "changes": [
+    {
+      "id": "c1",
+      "file": "billing/invoice.py",
+      "title": "CHANGE_TITLE",
+      "kind": "logic",
+      "diff": "@@ -20,3 +20,3 @@ def total(items):\n-    return sum(round(i.price) for i in items)\n+    return round(sum(i.price for i in items))\n+    # embedded </script> and <!-- comment --> from reviewed source",
+      "briefing": {
+        "what": "BRIEF_WHAT", "why": "BRIEF_WHY", "uses": "BRIEF_USES",
+        "consumes": "BRIEF_CONSUMES", "tested": "BRIEF_TESTED"
+      },
+      "context": [
+        {"label": "CTX_LABEL", "path": "billing/cart.py:14", "code": "CTX_CODE", "collapsed": false}
+      ],
+      "comments": [
+        {"severity": "high", "source": "code-review", "title": "FIND_TITLE",
+         "body": "FIND_BODY", "line": 20, "suggested_fix": "FIND_FIX"}
+      ]
+    }
+  ]
+}

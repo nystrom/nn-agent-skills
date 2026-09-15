@@ -1,16 +1,16 @@
-.PHONY: test test-quick test-keep test-datalog validate
+.PHONY: test test-evolve test-review validate check
 
-test-sort:
-	bash tests/bubble-sort/run-test.sh
+# Every test is deterministic and offline: no API calls, no network, seconds to run.
+test:
+	bash tests/run-tests.sh
 
-test-quick:
-	bash tests/bubble-sort/run-test.sh --iterations 3
+test-evolve:
+	bash tests/run-tests.sh evolve
 
-test-keep:
-	bash tests/bubble-sort/run-test.sh --keep
-
-test-datalog:
-	bash tests/datalog/run-test.sh
+test-review:
+	bash tests/run-tests.sh review
 
 validate:
 	claude plugin validate . --strict
+
+check: test validate
