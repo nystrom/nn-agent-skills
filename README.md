@@ -40,13 +40,23 @@ AI slop, refactoring opportunities, and dead code — not just bugs.
 ### ui-code-review
 
 The same review as a **single self-contained HTML page** instead of a terminal
-session. A full-width overview band at the top carries what the change does, its
-scope, the verdict, the cross-cutting concerns, and the skipped bookkeeping; below
-it, a sidebar navigates the changes, the center shows a GitHub-style diff with
-whitespace, split/unified, and old-only/new-only toggles, and the right pane holds
-each change's briefing, the surrounding code it needs, and the findings with
-click-to-jump line anchors. It is a report: it asks nothing, posts nothing, and
-edits nothing. The output file needs no server and fetches nothing.
+session. The page has two tabs.
+
+The **Overview** tab tells the whole-change story: what it does, its scope, the
+before/after architecture diagrams, the verdict, the advantages, disadvantages,
+and risks, the cross-cutting concerns, and a folded list of the skipped
+bookkeeping.
+
+The **Changes** tab lays out every semantic change in three panes — a sidebar
+that navigates the changes with severity counts, a GitHub-style diff in the
+center showing only that change's hunks (with a marker on every line carrying a
+finding, a whole-file toggle, old/new file buttons, show/hide whitespace, and
+side-by-side vs. unified), and on the right the change's briefing, its
+advantages/disadvantages/risks, the surrounding code it needs, and the findings
+with click-to-jump line anchors.
+
+It is a report: it asks nothing, posts nothing, and edits nothing. The output
+file needs no server and fetches nothing.
 
 ### evolve
 
@@ -75,10 +85,12 @@ claude plugin marketplace add nystrom/nn-agent-skills
 claude plugin install nn-agent-skills@nn-agent-skills
 ```
 
-Once installed, review a PR or branch by asking Claude Code to walk through the
-changes one by one, "grill me on this diff", or "review my local changes and fix
-them"; ask for a web page or a review report to get the HTML page instead. Invoke
-Evolve with `/nn-agent-skills:evolve` and the target plus fitness criteria; see
+Once installed, there are three ways into a review. Ask for the findings alone
+("review this and just tell me what's wrong") to get `run-review-lenses`. Ask to
+walk through the changes one by one, "grill me on this diff", or "review my local
+changes and fix them" for the interactive session. Ask for a web page or a review
+report to get the HTML page. Invoke Evolve with `/nn-agent-skills:evolve` and the
+target plus fitness criteria; see
 [`plugins/nn-agent-skills/skills/evolve/README.md`](plugins/nn-agent-skills/skills/evolve/README.md)
 for examples and requirements.
 
@@ -99,3 +111,7 @@ select the skill.
 git clone https://github.com/nystrom/nn-agent-skills.git
 agy plugin install ./nn-agent-skills
 ```
+
+`agy` installs from the cloned checkout rather than a remote marketplace, so
+`git pull` in that directory is how you update. The skills are the same four;
+describe a matching task and let the agent select one.
