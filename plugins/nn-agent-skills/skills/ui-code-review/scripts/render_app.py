@@ -137,8 +137,9 @@ code{font-family:var(--mono);font-size:.92em;background:var(--hunk);
 
 table.diff{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12.5px}
 table.diff td{padding:0 8px;white-space:pre-wrap;word-break:break-word;vertical-align:top}
-td.gut{width:1px;text-align:right;color:var(--mut);user-select:none;
-  border-right:1px solid var(--line);opacity:.7;white-space:nowrap}
+table.diff td.gut{width:1px;min-width:4ch;text-align:right;color:var(--mut);
+  user-select:none;border-right:1px solid var(--line);opacity:.7;
+  white-space:nowrap;word-break:keep-all;overflow-wrap:normal}
 td.code{width:auto}
 tr.d-add{background:var(--add-bg)} tr.d-add .gut{background:var(--add-gut)}
 tr.d-del{background:var(--del-bg)} tr.d-del .gut{background:var(--del-gut)}
@@ -763,9 +764,14 @@ renderPanes();
 def build_page(state):
     """Return the whole review as one self-contained HTML page."""
     title = state.get("title") or "Code review"
+    # The state is baked into a literal <script>, and reviewed diffs routinely
+    # contain "</script>". Escaping the angle brackets keeps reviewed content
+    # from terminating the block early; \uXXXX decodes back to the same text.
+    baked = (json.dumps(state, ensure_ascii=False)
+             .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
     return (TEMPLATE
             .replace("__TITLE__", title.replace("<", "&lt;"))
-            .replace("__STATE__", json.dumps(state, ensure_ascii=False)))
+            .replace("__STATE__", baked))
 
 
 def open_in_browser(path):

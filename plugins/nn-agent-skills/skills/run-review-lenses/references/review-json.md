@@ -5,7 +5,14 @@ the queue of semantic changes, the context gathered for each, the merged lens
 findings, and the whole-change verdict.
 
 It is written to `<workdir>/review.json` and is the **only** thing a consumer
-needs — a consumer reads this file and presents it. Nothing here mentions how it
+needs — a consumer reads this file and presents it.
+
+**`<workdir>`** is a scratch directory outside the repository being reviewed —
+the session's own temporary directory, never the working tree, so a review never
+leaves untracked files in the tree it is reviewing. Everything a consumer derives
+from this file (`ui-code-review`'s `state.json` and `review.html`) is written
+beside it. It is not cleaned up: the artifacts stay readable after the session.
+Report the path so the reader can open it. Nothing here mentions how it
 is presented, and nothing here is specific to a walkthrough, a page, or a
 terminal summary.
 
@@ -107,15 +114,14 @@ doesn't own.
 - **`comments`** are ordered by severity (blocker → praise).
 - A custom `severity` from some review lens is passed through as-is rather than
   coerced; consumers style unknown values neutrally.
-- **`structural`** holds only what attaches to no single change. A finding that
-  lands on a change belongs in that change's `comments`, not here.
+- **`structural`** holds only what attaches to no single change; a finding that
+  lands on a change belongs in that change's `comments`. It carries `source` and
+  `severity` like any other finding, so a consumer can rank and attribute it, and
+  a consumer wanting flat display text derives that from these entries rather than
+  this skill writing the same content twice.
 - **`briefing`** keys are exactly `what`, `why`, `uses`, `consumes`, `tested`.
   `uses` is the beat most often skimped — a reviewer who has never seen the
   codebase needs it more than any other.
-- **`structural`** carries `source` and `severity` so a consumer can rank and
-  attribute it. A consumer that wants it as flat display text (the page's
-  `overview.cross_cutting`) derives that from these entries rather than this skill
-  writing the same content twice.
 - Required: `title`, `scope`, `changes`. Everything else is optional, though
   `overview` and `briefing` should always be present in a real review.
 

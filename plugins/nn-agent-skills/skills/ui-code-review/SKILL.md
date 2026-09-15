@@ -27,8 +27,8 @@ description: >-
   report they can read and share, or the interactive-code-review content without
   the back-and-forth. The finished page opens in the reader's browser on its own.
   For a turn-by-turn review that posts comments or applies fixes, use
-  interactive-code-review instead; for the findings alone with no page, use
-  run-review-lenses.
+  interactive-code-review instead. A bare "review this code" that says nothing
+  about wanting a page belongs to run-review-lenses, not here.
 ---
 
 # UI Code Review
@@ -91,9 +91,10 @@ Invoke **`run-review-lenses`**. It establishes scope (the net diff against
 `origin/main`, extended through uncommitted work when the tree is dirty), walks
 the commits for intent, splits semantic changes from bookkeeping, gathers each
 change's context, fans out a parallel subagent per installed review lens, and
-writes `review.json`. If the user named a PR, branch, or range, pass it through.
-Ask for `full` briefing depth — the page is read by someone who may never have
-seen the code, and there is no conversation to fill a gap.
+writes `review.json`. Pass `caller: ui-code-review`, so it stops at the file
+instead of printing its own summary. If the user named a PR, branch, or range,
+pass that through too. Ask for `full` briefing depth — the page is read by someone
+who may never have seen the code, and there is no conversation to fill a gap.
 
 Read that file. It is the whole review:
 

@@ -18,10 +18,13 @@ description: >-
   review.json and, run on its own, prints a short ranked summary. Use this when
   the user wants the findings and nothing more: "review this and just tell me
   what's wrong", "what would a code review flag here?", "run the review lenses",
-  or when another skill needs a review to build on. For a guided change-by-change
-  session that posts comments or applies fixes, use interactive-code-review; for
-  the whole review as a browsable HTML page, use ui-code-review. Both of those
-  run this skill first.
+  or when another skill needs a review to build on. **This is also the default
+  for a bare, unqualified request** — "review this code", "review this PR", "review
+  this branch" with nothing said about how to present it: start here, report the
+  findings, and offer the other two. For a guided change-by-change session that
+  posts comments or applies fixes, use interactive-code-review; for the whole
+  review as a browsable HTML page, use ui-code-review. Both of those run this
+  skill first.
 ---
 
 # Run Review Lenses
@@ -38,12 +41,16 @@ collapse.
 
 ## Inputs
 
-Both are optional; the defaults are right for a standalone run.
+All three are optional; the defaults are right for a standalone run.
 
 - **Scope** — a PR, branch, or range. Defaults to the net diff against
   `origin/main`. Set `include_working_tree` when uncommitted changes are part of
   the surface (a consumer fixing local code wants this; a consumer commenting on
-  a PR does not).
+  a PR does not). When no caller sets it, step 1 derives it from the working tree.
+- **`caller`** — the name of the consumer invoking this skill, or `none` when a
+  user invoked it directly. Defaults to `none`. It decides where the workflow
+  stops: step 6 for a consumer, step 7 for a user. A consumer always sets it, so
+  the branch never rests on guessing from conversation.
 - **Briefing depth** — `full` (default): write for a reviewer who has **never
   seen this codebase**, all five beats. `light`: the reader wrote this code, so
   gather only what makes a change safe to act on — what uses it, and what's
@@ -79,6 +86,11 @@ git fetch origin --quiet
 git status --porcelain                                 # dirty tree?
 gh pr view --json number,url,headRefName 2>/dev/null   # is there a PR?
 ```
+
+**When no caller supplied `include_working_tree`, a dirty tree sets it true.**
+A clean tree sets it false, which reduces to the same net diff either way. This
+is what both consumers tell their readers the scope is, so a review that found
+uncommitted changes never silently drops them.
 
 Review the **net diff against origin/main** — committed work only:
 
@@ -170,44 +182,22 @@ with a real `path:line`. These become the `context[]` blocks.
 
 ### 5. Review with the multi-agent fan-out
 
-Read `references/multi-agent-review.md` and run the fan-out **once over the whole
-change set** — not per change. Discover every relevant review lens installed in
-the environment — skills *and* commands like the builtin `/code-review` — and
-spawn a parallel subagent per lens that **loads and applies it** (a skill via the
-`Skill` tool; the builtin `code-review` command by reading and following its
-instruction file), whose findings all merge into **one list**. Every lens subagent
-runs on Sonnet (`model: "sonnet"`), not the model driving the review. Between
-them they cover correctness bugs *and* long-run quality (AI slop, refactor and
-abstraction opportunities, dead code, duplication) *and* conformance to
-standards/spec — whatever the available lenses cover.
+Read `references/multi-agent-review.md` and follow it. Run the fan-out **once
+over the whole change set** — not per change: discover every relevant review lens
+installed in the environment, spawn one unnamed `general-purpose` subagent per
+lens on `model: "sonnet"` to load and apply it, and merge everything they return
+into one list. The reference owns the details — which tools count as lenses,
+where to look for them, how the builtin `code-review` command is applied, the
+wire format each lens returns, and the rule for routing a finding onto a queue
+item or into `structural[]`.
 
-Discover and gate applicability first (per the reference): select review lenses
-by **what each one is for** (any code-review lens, however terse its
-description). Look in two places — the available-skills list for **skills**, and
-the plugin commands directory for the builtin **`code-review` command** (which
-won't show up as a skill; find its instruction file with a glob like
-`~/.claude/plugins/**/commands/code-review.md`). Exclude this skill and its
-consumers, and let each lens self-gate on its own stated domain against the repo
-and diff — biasing toward inclusion, since a standards doc (`CLAUDE.md`, etc.) is
-almost always present and overlapping general lenses de-duplicate at the merge
-step.
+Between them the lenses cover correctness bugs *and* long-run quality (AI slop,
+refactor and abstraction opportunities, dead code, duplication) *and* conformance
+to standards and spec — whatever the installed lenses cover. Skip any lens that
+genuinely has no context and say so rather than faking findings.
 
-Apply the `code-review` command by **reading its instruction file and following
-the methodology while skipping its eligibility bail, its confidence filter, and
-its final GitHub post** — it returns findings, it never comments; its only PR
-dependency is in those stripped reporting steps, so it works with no PR present.
-A quality-review skill that ends by applying a change (e.g. `simplify`) is a lens
-too: invoke it via the `Skill` tool but **stop at its findings**, returning the
-change as a `suggested_fix` rather than letting it edit. Skip any lens that
-genuinely has no context, and say so rather than faking findings. If no subagent
-tool is available, load and apply the lenses inline in sequence — same merged
-list, no parallelism.
-
-De-duplicate and rank the merged findings by severity, then attach each to the
-queue item it lands on, tagged by its `source` lens as provenance. File real
-concerns only — a change that collects no findings gets an empty `comments` list,
-which is an honest result, not a gap to fill. Findings that belong to no single
-change go in `structural[]`.
+De-duplicate and rank the merged findings by severity. File real concerns only —
+a change that collects no findings gets an empty `comments` list.
 
 ### 6. Write the overview and the file
 
@@ -222,19 +212,16 @@ Write the three `overview` fields:
   the board, scope creep, a cleaner decomposition, whether it should be split. Do
   not hedge into a neutral recap.
 
-Assemble everything into one object per `references/review-json.md` and write it:
+Assemble everything into one object per `references/review-json.md` and write it
+to `<workdir>/review.json`, where `<workdir>` is as `review-json.md` defines it.
 
-```bash
-<workdir>/review.json
-```
-
-Tell the caller that path. If a consumer invoked this skill, stop here — the file
-is the handoff.
+Report that path. **When `caller` names a consumer, stop here** — the file is the
+handoff, and the consumer presents it.
 
 ### 7. Standalone ending
 
-Only when a user invoked this skill directly. Print a short summary and nothing
-more — no walkthrough, no per-change briefings:
+**Only when `caller` is `none`.** Print a short summary and nothing more — no
+walkthrough, no per-change briefings:
 
 - the scope line (base, files, +/-);
 - `M` semantic changes queued, `N` bookkeeping edits skipped;

@@ -102,6 +102,15 @@ apply in a plain repo.
 Send **one message with all applicable `Agent` calls** so they run in parallel.
 Use the `general-purpose` subagent type and pass `model: "sonnet"` on every
 call, so lens work runs on Sonnet regardless of the model driving the review.
+
+**Spawn them unnamed.** A named agent becomes a background teammate whose report
+does not come back to the review, and the fan-out then completes with no findings
+at all — a silent empty review, not a visible failure. Omit `name` so each agent
+returns its report directly.
+
+A lens that returns nothing is an **error to surface**, not an empty result to
+accept. Say which lenses ran and which returned nothing.
+
 Each prompt must:
 
 - Name the **one lens this subagent owns** and instruct it to **load and apply**
@@ -134,13 +143,21 @@ Each prompt must:
   instead, one object per finding:
 
   ```
-  { source, path, line, severity, note, suggested_fix }
+  { source, path, line, severity, title, body, suggested_fix }
   ```
+
+  These are the field names `review-json.md` stores, so a finding is written
+  through unchanged. Do not invent a second vocabulary for the same things.
 
   - `source` — the **name of the lens** that produced the finding (e.g. the
     skill slug or command name). This is provenance for the reader; everything
     still lands in one merged list.
+  - `path` — the **routing key, and the one field that is not stored**. It picks
+    the queue item whose `file` it matches; the stored finding takes its location
+    from the change it hangs on. See "Recording findings" for the rule.
   - `line` — new-file line number, or `null` for a file-/design-level finding.
+  - `title` — a short heading for the finding; optional.
+  - `body` — the finding itself: what is wrong and why it matters.
   - `suggested_fix` — the concrete change: the smallest edit that resolves it.
     Always ask for it; a consumer may offer or apply it.
 - **A lens must only *return* findings — never act.** No subagent may post to
@@ -176,14 +193,17 @@ Collect the findings from every agent into a **single list**. Then:
 
 Each queue item's **"what could be improved"** is the merged findings that landed
 on it, each tagged by its `source` skill name so the reader knows which lens
-produced it. A change with no findings from any skill gets an honest "nothing
-jumps out" — and is still kept. The findings decide what a change's briefing
-says, never which changes survive; the queue was fixed before this fan-out ran.
+produced it. A change with no findings from any skill gets an empty list. The
+findings decide what a change's briefing says, never which changes survive; the
+queue was fixed before this fan-out ran.
 
-Findings that belong to no single change — architectural direction, missing tests
-across the board, scope creep — are **structural**. Keep them separate from the
-per-change lists; they go in `structural[]` (see `review-json.md`), and consumers
-use them for the whole-change verdict.
+**Routing a finding.** Attach it to the queue item whose `file` matches the
+finding's `path`, and drop `path` on the way in — the stored finding takes its
+location from the change it hangs on. A finding whose `path` matches no queue
+item, or that spans several of them — architectural direction, missing tests
+across the board, scope creep — is **structural**: it goes in `structural[]`
+(see `review-json.md`), also without `path`, and consumers use it for the
+whole-change verdict.
 
 ## Fallback — no subagent tool available
 

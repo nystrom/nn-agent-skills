@@ -57,7 +57,7 @@ change is presented the same way, with an honest "nothing jumps out" in beat 3.
 ### 2. Briefing
 Whatever `briefing` beats `review.json` carries, in plain language. The depth was
 set when the review ran (SKILL.md step 1), so present what is there rather than
-deciding again — comment mode gets all five, fix mode only `uses` and `tested`:
+deciding again. The beats, when the review gathered them:
 
 - **What this is** — one sentence. The change in human terms.
 - **Why it exists** — the intent, drawn from the commit message / PR body. If

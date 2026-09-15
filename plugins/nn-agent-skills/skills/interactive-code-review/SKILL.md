@@ -25,10 +25,11 @@ description: >-
   through changes one by one, "grill me on this diff", review commit by commit,
   review against origin/main, draft and post GitHub review comments, OR walk
   through local changes and fix the problems ("fix the problems", "review my
-  local changes and fix them") — even if they don't say "interactive". For the
-  same review as one browsable HTML page with no back-and-forth, use
-  ui-code-review; for the findings alone with no walkthrough, use
-  run-review-lenses.
+  local changes and fix them") — even if they don't say "interactive". A bare
+  "review this code" with nothing said about presentation is not this skill:
+  that belongs to run-review-lenses, which reports the findings and offers the
+  walkthrough. For the same review as one browsable HTML page with no
+  back-and-forth, use ui-code-review.
 ---
 
 # Interactive Code Review
@@ -89,9 +90,9 @@ git status --porcelain                                 # dirty tree? → leans f
 gh pr view --json number,url,headRefName 2>/dev/null   # a PR? → leans comment mode
 ```
 
-State the mode in one line. Then invoke **`run-review-lenses`**, passing the two
-inputs from the table above **explicitly**, plus the scope if the user named a PR,
-branch, or range. Those values are authoritative — it will not re-derive them, so
+State the mode in one line. Then invoke **`run-review-lenses`**, passing
+`caller: interactive-code-review` and the two inputs from the table above
+**explicitly**, plus the scope if the user named a PR, branch, or range. Those values are authoritative — it will not re-derive them, so
 the queue it builds always matches the mode you just stated. It establishes scope, walks the commits for intent,
 splits semantic changes from bookkeeping, gathers each change's context, fans out
 to every installed review lens, and writes `review.json`.

@@ -37,7 +37,7 @@ gh api \
 ```
 
 `gh api` fills `{owner}/{repo}` from the current remote. `line` is the new-file
-line number (the same anchor used in the HTML card); use `side=RIGHT` for
+line number — the `comments[].line` the review recorded; use `side=RIGHT` for
 added/changed lines, `side=LEFT` for a deleted line. The response includes an
 `html_url` — surface it in your one-line confirmation.
 

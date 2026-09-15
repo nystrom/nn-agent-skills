@@ -1,6 +1,6 @@
 {
   "name": "nn-agent-skills",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Run every installed review lens for the findings alone, walk the changes one at a time, or render the whole review as one HTML page, plus evolutionary code optimization against a fitness function.",
   "author": {
     "name": "nystrom",
