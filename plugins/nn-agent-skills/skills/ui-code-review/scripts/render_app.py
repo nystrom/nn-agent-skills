@@ -17,7 +17,7 @@ theme-aware (light / dark) and has two tabs:
   line carrying a finding), and the briefing, context, and findings on the right.
 
 See references/web-presentation.md for the state.json model this consumes; it is a
-superset of references/review-schema.md. Diagram, usage, and tradeoff specs are in
+superset of the review.json contract. Diagram, usage, and tradeoff specs are in
 references/diagrams.md.
 """
 import argparse

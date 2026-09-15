@@ -64,9 +64,10 @@ tells the author what to keep doing and signals you actually read it.
 ## From finding to suggested fix
 
 A finding is stronger with a concrete fix attached than as a critique alone, so
-carry the lens's `suggested_fix` into the page whenever it has one. Prefer the
-smallest change that resolves the finding. For a refactor or abstraction, state
-the target shape. Nothing is applied — the reader decides.
+give every finding a `suggested_fix` where one exists. Prefer the smallest change
+that resolves the finding. For a refactor or abstraction, state the target shape
+so the reader can judge the direction. Whether that fix is ever applied is the
+consumer's decision, not this skill's — record it either way.
 
 ## Writing good comments
 

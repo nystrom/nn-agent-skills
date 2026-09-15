@@ -8,7 +8,7 @@
     {
       "name": "nn-agent-skills",
       "source": "./plugins/nn-agent-skills",
-      "description": "Guided code review one change at a time in the terminal, or the whole review as one HTML page, plus an LLM-driven evolutionary code optimizer."
+      "description": "Run every installed review lens for the findings alone, walk a change set one change at a time in the terminal, or read the whole review as one HTML page, plus an LLM-driven evolutionary code optimizer."
     }
   ]
 }

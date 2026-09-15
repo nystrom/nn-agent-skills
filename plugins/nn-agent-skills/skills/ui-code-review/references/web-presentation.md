@@ -27,7 +27,9 @@ Everything is already in the file, so tabs and navigation need no server.
 
 ## The `state.json` model
 
-A superset of `references/review-schema.md`. Top level:
+A superset of the `review.json` contract that `run-review-lenses` writes
+(`run-review-lenses/references/review-json.md`). This skill **adds** the fields
+below; it never redefines one the contract already owns. Top level:
 
 | field      | type   | purpose                                                     |
 | ---------- | ------ | ----------------------------------------------------------- |
@@ -57,6 +59,11 @@ Each `changes[]` entry:
 | `diagrams`  | array  | optional before/after box-and-arrow pairs, drawn above the diff |
 | `usage`     | array  | optional "the old way vs. the new way" code pairs, drawn above the diff |
 | `tradeoffs` | object | optional `{ advantages, disadvantages, risks }` for this change |
+
+`overview.cross_cutting` is this skill's flat-text rendering of the contract's
+`structural[]` findings: one string per entry, severity folded into the wording.
+The contract keeps `structural[]` (with `source` and `severity`); the page shows
+the derived strings.
 
 `overview.diagrams` (the whole-change architecture pair), `overview.tradeoffs`,
 and the three per-change fields above are specified in

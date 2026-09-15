@@ -109,7 +109,7 @@ per block. This is the reader's only chance to see it; there is no conversation
 to fill the gap.
 
 ### What could be improved (`comments`)
-The merged findings that landed on this change (see `multi-agent-review.md`),
+The change's `comments` from `review.json` — the findings that landed on it —
 ranked by severity, each tagged with the `source` lens that produced it and, where
 it applies, a new-file `line` so the page can jump to it. Include
 long-run-quality findings — slop, refactor and abstraction opportunities, dead

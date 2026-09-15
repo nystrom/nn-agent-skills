@@ -19,10 +19,10 @@ diff — the story of the change, not a file-by-file enumeration. If the branch 
 really two unrelated changes wearing one PR, say that here.
 
 ### 2. Scope
-One or two lines: how many semantic changes are queued (`N changes to walk`) and
+One or two lines: how many semantic changes are queued (`M changes to walk`) and
 the one-line bookkeeping summary of what's being skipped. This is the only place
 the bookkeeping summary is stated; never repeat it later. The queue is every
-semantic change, so `N` is the number of turns coming — not a shortlist of the
+semantic change, so `M` is the number of turns coming — not a shortlist of the
 problematic ones.
 
 ### 3. High-level verdict
@@ -36,8 +36,8 @@ that no individual change owns.
 - Scope: is the PR doing too much and should be split? Too little to stand alone?
 - Whether the stated intent actually matches what the diff does.
 
-Draw these from the merged fan-out findings that are **structural rather than
-local** — the ones that would otherwise have no single change to attach to. Be
+Draw these from `structural[]` in `review.json` — the findings that have no
+single change to attach to. Be
 direct: "This is a clean, well-scoped change" or "This mixes two concerns and
 should be split" — not a neutral recap. Local, change-specific findings stay
 attached to their change and are *not* pre-empted here.
@@ -54,9 +54,10 @@ change is presented the same way, with an honest "nothing jumps out" in beat 3.
 ### 1. Header
 `**Change N of M — <short title>**  ·  <file(s)>  ·  <kind>`
 
-### 2. Briefing (always in the chat, GUI or not)
-Short beats in plain language. Assume the reviewer has never
-seen the code — give all four:
+### 2. Briefing
+Whatever `briefing` beats `review.json` carries, in plain language. The depth was
+set when the review ran (SKILL.md step 1), so present what is there rather than
+deciding again — comment mode gets all five, fix mode only `uses` and `tested`:
 
 - **What this is** — one sentence. The change in human terms.
 - **Why it exists** — the intent, drawn from the commit message / PR body. If
@@ -70,8 +71,8 @@ seen the code — give all four:
 - **What's tested** — Whether the change is tested, and how. What tests are missing?
 
 ### 3. What could be improved
-The merged findings that landed on this change from the fan-out (see
-`multi-agent-review.md`), as a short list ranked by severity. Tag each by source
+The change's `comments` from `review.json` — the merged findings the fan-out
+landed on it — as a short list ranked by severity. Tag each by source
 — `[<skill-name>]`, the review skill that produced it — with a severity word
 and, where it applies, a line reference. Include long-run-quality findings (slop,
 refactor and abstraction opportunities, dead code, duplication), not just bugs.
@@ -132,35 +133,16 @@ conversation the reviewer controls.
 **Either mode:** a question about the change → answer it, then re-offer the
 options. Don't advance until they've chosen.
 
-## GUI vs. terminal presentation
+## Presentation
 
-Detect whether output can render HTML (a chat GUI / app that shows file cards or
-artifacts) versus a plain terminal.
+Present each change as tight markdown: the `diff` in a fenced block, each
+`context` block under a `**Label (path:line)**` heading, and the findings as a
+bulleted list, each tagged with the `source` lens that produced it. The per-mode
+action options render exactly as the block shown above.
 
-**GUI — render an HTML card per change.** Build a single-change JSON matching
-`references/review-schema.md` (one entry in
-`changes[]`: the widened diff, the context blocks you gathered, and the concerns
-as `comments[]`), then run the renderer:
-
-```bash
-python3 scripts/render_review.py change-cN.json -o change-cN.html
-```
-
-Paths are relative to this skill's directory. Present `change-cN.html` (via the
-file-presentation / artifact tool), and put the briefing and the per-mode action
-options in the chat message next to it. One card per turn — do not pre-render the
-whole queue. In fix mode the card still shows the findings; the proposed fix is
-previewed and applied through the chat + edit tools, not embedded in the card.
-
-If for some reason the renderer can't run (e.g. no Python), emit a minimal
-self-contained HTML card yourself: a `<pre>` diff block, the context quoted
-under labeled headings, and the concerns as a list. Keep it offline-safe (no
-external CSS/JS).
-
-**Terminal / no GUI** — skip HTML entirely. Present the same content as tight
-markdown: the diff in a fenced block, each context block under a `**Label
-(path:line)**` heading, and the concerns as a bulleted list. The per-mode action
-options render exactly as the block shown above.
+If the reviewer wants a visual review instead — a GitHub-style diff, navigable
+panes, click-to-jump findings — that is `ui-code-review`, which renders the same
+`review.json` as one HTML page. Say so and switch rather than emitting HTML here.
 
 ## Pacing rules
 

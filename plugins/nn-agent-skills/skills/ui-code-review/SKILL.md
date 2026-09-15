@@ -16,29 +16,31 @@ description: >-
   help, the surrounding code it needs, and the review findings with click-to-jump
   line anchors. It is a report, not a session: it asks nothing, posts nothing to
   GitHub, and edits no files. The review hunts for AI slop, refactor and
-  abstraction opportunities, and dead code, not just bugs, by fanning out to a
-  parallel subagent per relevant review lens installed in the environment.
-  It reviews the NET diff (against origin/main by default, including uncommitted
-  work when the tree is dirty), reading commits for intent while ignoring changes
-  that later commits undid. Output is a single HTML file that needs no server and
+  abstraction opportunities, and dead code, not just bugs. The review itself is
+  produced by the run-review-lenses skill, which fans out to a parallel subagent
+  per review lens installed in the environment and writes review.json; this skill
+  renders that file as the page. It reviews the NET diff (against origin/main by
+  default, including uncommitted work when the tree is dirty), reading commits for
+  intent while ignoring changes that later commits undid. Output is a single HTML file that needs no server and
   fetches nothing. Use this whenever the user wants a visual/web/GUI code review,
   a GitHub-like diff walkthrough, a review "in a browser", a review page or
   report they can read and share, or the interactive-code-review content without
   the back-and-forth. The finished page opens in the reader's browser on its own.
   For a turn-by-turn review that posts comments or applies fixes, use
-  interactive-code-review instead.
+  interactive-code-review instead; for the findings alone with no page, use
+  run-review-lenses.
 ---
 
 # UI Code Review
 
-Review a change set and write the whole thing out as **one HTML page**. This is
-the same review as `interactive-code-review` — the same net-diff classification,
-the same parallel fan-out, the same per-change briefing beats — with two
-differences: the reader gets it all at once in a browser, and nothing is
-interactive. As there, the goal is to make the software *better in the long run*
-— read every change asking "does this raise the quality of the codebase?": AI
-slop, cleaner abstractions, dead code, duplication — not merely "is this
-correct?".
+Review a change set and write the whole thing out as **one HTML page**.
+
+The review is not done here. `run-review-lenses` produces it — the net-diff
+classification, the parallel lens fan-out, the per-change briefing beats — and
+writes `review.json`. This skill turns that file into a page: the reader gets the
+whole review at once in a browser, and nothing is interactive.
+
+`interactive-code-review` reads the same file and walks it turn by turn instead.
 
 ## The page
 
@@ -68,19 +70,11 @@ Because the page is the entire review, everything the reader needs has to be
 
 It asks nothing, posts no GitHub comments, and edits no files. It does not walk
 the reviewer through the changes one at a time. If the user wants any of that,
-they want `interactive-code-review`; say so and switch.
+they want `interactive-code-review`; say so and switch. If they want the findings
+alone with no page at all, that is `run-review-lenses` on its own.
 
 Read each resource as you reach the step that needs it:
 
-- `references/change-classification.md` — semantic vs. routine (what to write up
-  vs. what to summarize as bookkeeping).
-- `references/net-diff-and-context.md` — net-diff/commit reasoning **and** context
-  gathering.
-- `references/multi-agent-review.md` — the fan-out: discover every installed
-  review lens (skills *and* commands like `/code-review`) → one subagent applies
-  each → one merged findings list.
-- `references/adversarial-review.md` — turning findings into good comments, and
-  the solo checklist when no review lens can be loaded.
 - `references/page-content.md` — what the Overview tab and each change section
   must say.
 - `references/diagrams.md` — when a diagram earns its place, and the specs for the
@@ -88,70 +82,30 @@ Read each resource as you reach the step that needs it:
   disadvantages / risks block.
 - `references/web-presentation.md` + `scripts/render_app.py` — the `state.json`
   model, the toggles, and how to render.
-- `references/review-schema.md` — the per-change JSON fields (the page state is a
-  superset).
 
 ## Workflow
 
-Steps 1–5 are the review itself and are **identical** to
-`interactive-code-review`. Steps 6–7 replace its session with a page.
+### 1. Run the review
 
-### 1. Establish scope
+Invoke **`run-review-lenses`**. It establishes scope (the net diff against
+`origin/main`, extended through uncommitted work when the tree is dirty), walks
+the commits for intent, splits semantic changes from bookkeeping, gathers each
+change's context, fans out a parallel subagent per installed review lens, and
+writes `review.json`. If the user named a PR, branch, or range, pass it through.
+Ask for `full` briefing depth — the page is read by someone who may never have
+seen the code, and there is no conversation to fill a gap.
 
-```bash
-git fetch origin --quiet
-git status --porcelain                                 # dirty tree?
-gh pr view --json number,url,headRefName 2>/dev/null   # is there a PR?
-```
+Read that file. It is the whole review:
 
-Review the net diff against `origin/main`; when the tree is dirty, include the
-uncommitted work as part of the same surface:
-`git diff $(git merge-base origin/main HEAD) --stat`. If the user names a
-PR/branch/range, use that instead. State the base and scope in one line.
+- `overview.what` / `overview.verdict` and `structural[]` → the Overview tab;
+- `summary` — the counts and the `routine` bookkeeping list → the folded list;
+- `changes[]` — the queue in order, each with its `diff`, `briefing`, `context`,
+  and `comments` → one section each in the Changes tab.
 
-### 2. Understand the branch commit by commit — but review the net diff
+The queue is fixed. Every entry gets its own section, including the ones with an
+empty `comments` list. Do not add, drop, or reorder.
 
-`git log --oneline --no-merges origin/main..HEAD`. Read commit messages to build
-*intent*, then classify against the **net** diff. Do not review intermediate
-states. (Details in `references/net-diff-and-context.md`.)
-
-### 3. Classify: semantic vs. bookkeeping
-
-Per `references/change-classification.md`. Keep the **semantic** changes — the
-ones that change what the code does; collapse **bookkeeping** into the one-line
-summary plus the folded `summary.routine` list. Those two buckets are exhaustive:
-a change is either semantic or it matches a bookkeeping category in the
-reference. "Not worth reviewing" is not a third bucket. The one collapse that
-spans both is the repeated mechanical edit (`foo()` → `self.foo()` across 30 call
-sites): write up one representative instance and summarize the identical
-remainder with its count, per the reference's "Borderline calls". Any site that
-differs is its own item.
-
-Order the surviving semantic changes into a queue, grouped
-one-reviewable-idea-per-item across files. **No cap on queue length**; `M` is
-however many semantic changes there are. **The queue is final here** — later
-steps attach findings to items, they never add or remove one. Whether a lens
-flagged something has no bearing on whether a change is written up.
-
-### 4. For each change, gather context
-
-Per `references/net-diff-and-context.md`: the callers, the definitions, the
-consumers, the tests. Quote the minimum that makes it reviewable (5–15 lines per
-block), each with a real `path:line`. These become the change's `context[]`
-blocks — the page renders them, so gather them for every change.
-
-### 5. Review with the multi-agent fan-out → "what could be improved"
-
-Per `references/multi-agent-review.md`, run the fan-out **once over the whole
-change set**: discover every relevant installed review lens, spawn a parallel
-subagent per lens that loads and applies it, merge into one list. Every lens
-subagent runs on Sonnet (`model: "sonnet"`), not the model driving the review.
-De-duplicate, rank by severity, attach each finding to the queue item it lands on
-tagged by its `source` lens. File real concerns only — a change that collects no
-findings still gets its own section on the page. Structural findings that belong
-to no single change go to the Overview tab's verdict and cross-cutting list.
-
-### 6. Draw what the diff cannot say
+### 2. Draw what the diff cannot say
 
 Per `references/diagrams.md`, and only where it earns its place:
 
@@ -168,17 +122,24 @@ Per `references/diagrams.md`, and only where it earns its place:
   Disadvantages are costs accepted permanently; risks are what may go wrong on
   rollout or later. They are different lists.
 
-### 7. Build the state and render the page
+### 3. Build the state and render the page
 
-Assemble the whole review into one `state.json` per
-`references/web-presentation.md`, with the content
-`references/page-content.md` describes: the `overview` (what / scope / diagrams /
-verdict / tradeoffs / cross-cutting), the `summary` with the bookkeeping `routine`
-list, and one entry per queue item in `changes[]` — each with **only its own
-hunks** in `diff` (plus the whole-file `diff_all`, the whitespace-ignored
-`diff_nows` / `diff_all_nows`, and the old/new file text in `files` where they
-help), the `briefing` beats, the `context` blocks, its diagrams, usage, and
-tradeoffs, and the merged findings as `comments[]`.
+Start from `review.json` and **add** to it — it already carries the `overview`
+(`what`, `scope_line`, `verdict`), the `summary` with its bookkeeping `routine`
+list, and every `changes[]` entry with its `diff`, `briefing` beats, `context`
+blocks, and merged `comments[]`. Never rewrite a field it owns.
+
+What this skill adds, per `references/web-presentation.md` and the content
+`references/page-content.md` describes:
+
+- `overview.cross_cutting` — the `structural[]` findings as flat display strings,
+  one per entry;
+- `overview.diagrams` and `overview.tradeoffs` from step 2;
+- per change: `diagrams`, `usage`, and `tradeoffs` from step 2, plus the alternate
+  diff renderings the toolbar needs — the whole-file `diff_all`, the
+  whitespace-ignored `diff_nows` / `diff_all_nows`, and the old/new file text in
+  `files` where they help. The contract's `diff` already holds **only this
+  change's hunks**; leave it that way.
 
 ```bash
 python3 <skill>/scripts/render_app.py <workdir>/state.json -o <workdir>/review.html --open
@@ -188,7 +149,7 @@ python3 <skill>/scripts/render_app.py <workdir>/state.json -o <workdir>/review.h
 in the reader's default browser; always pass it, since the page is the review and
 they are waiting to read it.
 
-### 8. Hand over the page
+### 4. Hand over the page
 
 The page is already open in the browser. Give the reader the file path — so they
 can find it again, and in case this machine could not launch a browser (the script
@@ -204,10 +165,9 @@ stop; there is nothing to wait for.
   diff line, and the line's marker jumps back to the finding.
 - Never hand-author SVG or HTML into a state field. Diagrams are declarative; the
   renderer draws them.
-- Never drop a change. The only changes that skip the write-up are the ones
-  matching a bookkeeping category in `references/change-classification.md`, and
-  they go in the one-line summary. A semantic change is never omitted for being
-  small, obvious, or free of findings.
+- Never drop a change. `run-review-lenses` already collapsed the bookkeeping into
+  `summary.routine`; every entry in `changes[]` gets its own section. A semantic
+  change is never omitted for being small, obvious, or free of findings.
 - Every text field renders inline markdown only (`` `code` ``, `**bold**`,
   `*italic*`, newlines). Code goes in `context[]`, not in a fenced block.
 - `scripts/render_app.py` is stdlib-only; the page is offline-safe (no CDN, no
