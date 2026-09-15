@@ -4,6 +4,20 @@ Installable agent skills and plugins for Claude Code, Codex, and `agy`.
 
 ## Skills
 
+### run-review-lenses
+
+Review a change set with **every code-review lens installed in the environment**
+and write the result to `review.json` — the findings, and nothing else. It
+establishes scope, walks the branch commit by commit to learn why each change
+exists, splits the diff into semantic changes versus bookkeeping noise, gathers
+the context each change needs, then fans out a parallel subagent per lens and
+merges their findings into one severity-ranked list attached to the changes they
+land on.
+
+It is the basis for the two skills below — both run it first and present the
+`review.json` it writes. Run on its own, it prints a short ranked summary for
+when you want the findings and nothing more.
+
 ### interactive-code-review
 
 Walk a reviewer through a change set **one change at a time**, interactively —
@@ -75,8 +89,9 @@ codex plugin marketplace add nystrom/nn-agent-skills
 codex plugin add nn-agent-skills@nn-agent-skills
 ```
 
-Invoke the skills as `$interactive-code-review`, `$ui-code-review`, and
-`$evolve`, or describe a matching task and let Codex select the skill.
+Invoke the skills as `$run-review-lenses`, `$interactive-code-review`,
+`$ui-code-review`, and `$evolve`, or describe a matching task and let Codex
+select the skill.
 
 ## Install with agy
 
