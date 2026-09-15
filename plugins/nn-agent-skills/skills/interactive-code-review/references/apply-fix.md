@@ -57,10 +57,9 @@ stay on this change until the tree is clean again.
 
 ## Safety and boundaries
 
-- **Edits are uncommitted.** Leave them staged as working-tree changes so the
+- **Edits are uncommitted.** Leave them as unstaged working-tree changes so the
   reviewer can inspect, amend, or `git checkout -- <file>` to revert. Do not
-  `git add`/`commit`/`push` unless the reviewer explicitly asks — the global
-  rule stands.
+  `git add`/`commit`/`push` unless the reviewer explicitly asks.
 - **Never advance on a broken tree.** A failed build/test blocks the next change.
 - **Don't widen scope.** Fix the finding at hand; note adjacent problems as their
   own queue items rather than sneaking them into this edit.
