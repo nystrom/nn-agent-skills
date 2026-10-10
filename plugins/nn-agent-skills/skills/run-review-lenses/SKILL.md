@@ -1,246 +1,194 @@
 ---
 name: run-review-lenses
 description: >-
-  Review a change set with every code-review lens installed in the environment
-  and write the result to review.json — the findings, and nothing else. It fans
-  out to a parallel subagent per relevant lens (skills and commands like the
-  builtin code-review, discovered at review time, not a fixed set), each loading
-  and applying that lens, merged and de-duplicated into one severity-ranked list.
-  Before that it establishes scope, walks the branch commit by commit to learn
-  why each change exists, splits the diff into semantic changes versus
-  bookkeeping noise, and gathers the context each change needs (definitions,
-  callers, consumers, tests), so every finding is attached to the change it lands
-  on. It reviews the NET diff (against origin/main by default, optionally
-  including uncommitted work), ignoring changes that later commits undid. The
-  goal is the software's long-run quality, so it hunts AI slop, refactoring and
-  abstraction opportunities, and dead code, not just bugs. It does NOT walk you
-  through the changes, post to GitHub, edit files, or render a page — it produces
-  review.json and, run on its own, prints a short ranked summary. Use this when
-  the user wants the findings and nothing more: "review this and just tell me
-  what's wrong", "what would a code review flag here?", "run the review lenses",
-  or when another skill needs a review to build on. **This is also the default
-  for a bare, unqualified request** — "review this code", "review this PR", "review
-  this branch" with nothing said about how to present it: start here, report the
-  findings, and offer the other two. For a guided change-by-change session that
-  posts comments or applies fixes, use interactive-code-review; for the whole
-  review as a browsable HTML page, use ui-code-review. Both of those run this
-  skill first.
+  Review with every code-review lens installed in the environment (or a
+  caller-selected subset of lenses/commands) and write review.json — the
+  findings, and nothing else. Scope is a net diff (default), the whole repo, or
+  user-specified paths. It fans out to a parallel subagent per relevant lens
+  (skills and commands like the builtin code-review, discovered at review time),
+  each loading and applying that lens, merged into one severity-ranked list.
+  For diffs it walks commits for intent, splits semantic changes from
+  bookkeeping, and gathers context so findings attach to the change they land
+  on. Goal: long-run quality (AI slop, refactor opportunities, dead code), not
+  just bugs. Does NOT walk you through changes, post to GitHub, edit files, or
+  render a page. Use when the user wants findings alone, when another skill
+  needs a review to build on, or as the default for a bare "review this" with no
+  presentation named. For a guided session use interactive-code-review; for an
+  HTML page use ui-code-review — both run this skill first (all lenses by
+  default, or the lenses the user named).
 ---
 
 # Run Review Lenses
 
-Review a change set and record the result in `review.json`. This is the review
-itself — scope, intent, classification, context, and the lens fan-out — with no
-presentation attached. Something else decides what to do with the findings.
+Produce the review itself — scope, intent, classification, context, and the
+lens fan-out — and record it in `review.json`. No presentation attached.
+Something else decides what to do with the findings.
 
-The overarching goal is to make the software *better in the long run*, not merely
-to catch bugs in this diff. Read every change asking not just "is this correct?"
-but "does this raise the quality of the codebase?": AI slop, opportunities to
-refactor or introduce a cleaner abstraction, dead code to remove, duplication to
-collapse.
+The goal is long-run quality, not merely bug-catching in a diff: AI slop,
+cleaner abstractions, dead code, duplication to collapse.
 
 ## Inputs
 
-All three are optional; the defaults are right for a standalone run.
+All optional; defaults suit a standalone "review this" run. Full resolution
+rules: `references/review-scope.md`.
 
-- **Scope** — a PR, branch, or range. Defaults to the net diff against
-  `origin/main`. Set `include_working_tree` when uncommitted changes are part of
-  the surface (a consumer fixing local code wants this; a consumer commenting on
-  a PR does not). When no caller sets it, step 1 derives it from the working tree.
-- **`caller`** — the name of the consumer invoking this skill, or `none` when a
-  user invoked it directly. Defaults to `none`. It decides where the workflow
-  stops: step 6 for a consumer, step 7 for a user. A consumer always sets it, so
-  the branch never rests on guessing from conversation.
-- **Briefing depth** — `full` (default): write for a reviewer who has **never
-  seen this codebase**, all five beats. `light`: the reader wrote this code, so
-  gather only what makes a change safe to act on — what uses it, and what's
-  tested.
+- **`mode`** — `diff` (default) | `repo` | `paths`. Diff = net change set;
+  repo = whole tree audit; paths = user-named pathspecs/packages/symbols.
+- **Scope detail** — for `diff`: PR, branch, range, `base` (default
+  `origin/main`), and `include_working_tree`. For `paths`: the pathspecs. For
+  `repo`: optional focus hints (still whole-tree unless narrowed).
+- **`lenses`** — optional allow-list of review lens names (skill slugs and/or
+  commands such as `code-review`). **Default: all discovered applicable
+  lenses.** When the user or a consumer names specific lenses ("only
+  adversarial and dead-code", "performance review"), set `lenses` to exactly
+  that set — including third-party review skills/commands installed in the
+  environment. An empty allow-list is invalid; omit the input to mean all.
+- **`caller`** — consumer name, or `none` when the user invoked this directly.
+  Defaults to `none`. Stops at step 6 for a consumer, step 7 for a user.
+- **Briefing depth** — `full` (default) or `light` (fix-oriented).
+
+**Caller inputs are authoritative.** Do not re-derive a mode, path list,
+`include_working_tree`, or `lenses` set the caller already chose.
 
 Read each resource as you reach the step that needs it:
 
-- `references/change-classification.md` — semantic vs. routine.
-- `references/net-diff-and-context.md` — the net-diff/commit reasoning **and**
-  how to gather context.
-- `references/multi-agent-review.md` — the fan-out: **discover every relevant
-  installed review lens (skills *and* commands like `/code-review`) → one subagent
-  loads and applies each → one merged findings list**, plus applicability
-  detection.
-- `references/adversarial-review.md` — severity calibration, what makes a finding
-  worth filing, and the solo checklist for when no lens can be loaded at all.
+- `references/review-scope.md` — diff / repo / paths resolution.
+- `references/change-classification.md` — semantic vs. routine (`diff` mode).
+- `references/net-diff-and-context.md` — net-diff/commit reasoning and context
+  gathering.
+- `references/multi-agent-review.md` — discover lenses, apply optional
+  `lenses` filter, fan-out, merge.
+- `references/adversarial-review.md` — severity calibration and solo fallback.
 - `references/review-json.md` — the output contract.
 
 ## Workflow
 
 ### 1. Establish scope
 
-**A caller's inputs are authoritative.** When a consumer supplied a scope or
-`include_working_tree`, use them as given and do not re-derive either — the
-consumer already decided, and a second opinion here produces a queue that
-disagrees with what the consumer told the user. Skip the detection below and go
-straight to the diff.
-
-Detect only what was not supplied:
+Resolve `mode` and the surface per `references/review-scope.md`. State mode,
+base/pathspecs, and whether the working tree is included, in one line. Record
+`scope` and `base` (for `paths`, put the pathspecs in `scope`).
 
 ```bash
 git fetch origin --quiet
-git status --porcelain                                 # dirty tree?
-gh pr view --json number,url,headRefName 2>/dev/null   # is there a PR?
+git status --porcelain
+gh pr view --json number,url,headRefName 2>/dev/null
 ```
 
-**When no caller supplied `include_working_tree`, a dirty tree sets it true.**
-A clean tree sets it false, which reduces to the same net diff either way. This
-is what both consumers tell their readers the scope is, so a review that found
-uncommitted changes never silently drops them.
-
-Review the **net diff against origin/main** — committed work only:
+**`diff` mode** — net surface:
 
 ```bash
-git diff origin/main...HEAD --stat          # or origin/master if that's the base
+git diff origin/main...HEAD --stat
+# with working tree:
+git diff $(git merge-base origin/main HEAD) --stat
 ```
 
-`A...B` (three dots) diffs against the merge-base, so it already shows the *net*
-effect of the branch.
+**`paths` mode** — same as diff but limited to the pathspecs, or tree-as-is
+inside those paths when no range applies.
 
-When `include_working_tree` is set, extend the same surface through the
-uncommitted changes in one command, so files that are both committed and further
-modified aren't listed twice:
+**`repo` mode** — no net diff required; inventory the tree’s natural areas
+(packages, modules, top-level roots).
+
+### 2. Intent
+
+**`diff` / ranged `paths`:** read `references/net-diff-and-context.md`. Walk
+commits for *why*; review only what survives in the net surface.
 
 ```bash
-git diff $(git merge-base origin/main HEAD) --stat   # merge-base → working tree
+git log --oneline --no-merges origin/main..HEAD
 ```
 
-(Omitting the second ref makes `git diff` compare against the working tree.) If
-the tree is clean this reduces to the same net diff.
+**`repo` / path-as-is:** intent is an audit of the current code. Skip the
+commit-undo dance; optionally skim recent history only when it explains a
+hotspot.
 
-State the base and scope in one line and proceed. Only ask if it's genuinely
-ambiguous (e.g. detached HEAD with no obvious base, and no caller said otherwise).
-Record both in `scope` and `base`.
+### 3. Build the queue
 
-### 2. Understand the branch commit by commit — but review the net diff
+**`diff` / ranged `paths`:** apply `references/change-classification.md`.
+Semantic changes become queue items (group by logical change, not file).
+Bookkeeping goes to `summary.routine`. No cap on queue length; never drop a
+semantic change because it is small or unflagged.
 
-Read `references/net-diff-and-context.md`. The key idea: **walk the commits to
-learn *why* each change exists, but review the net diff so changes that a later
-commit undid never reach the reader.**
+**`repo` / path-as-is:** queue **logical areas** (one item per package/module
+cluster under review). There is no bookkeeping collapse from a diff; skip
+generated/vendor trees in `summary.routine` when you deliberately exclude them.
+Say what you covered and what you left out.
 
-```bash
-git log --oneline --no-merges origin/main..HEAD     # newest → oldest
-```
+**The queue is final here.** Later steps only attach findings.
 
-Read the commit messages (and per-commit diffs when a message is thin) to build
-the *intent* behind each surviving change. Then classify against the **net**
-diff from step 1 — anything added and later reverted simply isn't in it, so it
-is correctly out of scope. Do not review intermediate states.
+### 4. For each queue item, gather context
 
-### 3. Classify: semantic vs. bookkeeping
+Apply `references/net-diff-and-context.md` (adapt the beats to the mode).
 
-Apply `references/change-classification.md`. Keep the **semantic** changes — the
-ones that change what the code does (logic, control flow, interfaces,
-concurrency, security, behavior-changing config, behavior deletions). Collapse
-**bookkeeping** — whitespace/reformat, import shuffles, pure renames,
-moved-unchanged code, generated files/lockfiles, snapshot text, comment-only
-edits — into the `summary.routine` list.
-
-Those two buckets are exhaustive: a change is either semantic or it matches a
-bookkeeping category in the reference. "Not worth reviewing" is not a third
-bucket. The one collapse that spans both is the repeated mechanical edit
-(`foo()` → `self.foo()` across 30 call sites): queue one representative instance
-and summarize the identical remainder with its count, per the "Borderline calls"
-section of the reference. That applies only when the sites really are identical —
-any site that differs is its own queue item.
-
-Order the surviving semantic changes into a queue. Group by logical change, not
-by file: one reviewable idea = one queue item, even across files. **There is no
-cap on the queue length** — it holds *every* semantic change, whether that is 2
-or 30. Never truncate to a "top N" or a round number, and never drop a real
-change to keep the output short; only bookkeeping is collapsed.
-
-**The queue is final here.** Later steps attach findings to queue items; they
-never add or remove one. Whether a lens flagged something has no bearing on
-whether a change is in the queue — a correct, uncontroversial change is still a
-change.
-
-### 4. For each change, gather context
-
-Apply the context-gathering guidance in `references/net-diff-and-context.md`.
 For every queue item, fill the `briefing` beats:
 
-- **What** the change is (the diff hunk, widened so it reads in situ).
-- **Why it exists** — from the commit message / PR intent, in plain language.
-- **What uses it / who calls it** — call sites of a changed function, importers
-  of a changed symbol. This is the highest-value context; find it with
-  `git grep -n` or `rg -n`.
-- **Who consumes the result** — the other side of the interface: the reader of
-  what was written, the handler of what was emitted, the caller that uses the
-  return value.
-- **What's tested** — the covering test, or note its absence.
+- **What** — the change hunk (widened) in `diff` mode, or the area’s
+  responsibility in `repo` / path-as-is mode.
+- **Why it exists** — commit/PR intent for diffs; for repo audits, why this
+  area matters in the system (one or two sentences).
+- **What uses it / who calls it** — highest-value beat; `git grep -n` / `rg -n`.
+- **Who consumes the result** — the other side of the interface.
+- **What's tested** — covering tests, or explicit absence.
 
-At `light` depth, gather only **what uses it** and **what's tested**; skip the
-explanatory beats.
+At `light` depth, gather only **what uses it** and **what's tested**.
 
-Quote the *minimum* that makes a change reviewable (5–15 lines per block), each
-with a real `path:line`. These become the `context[]` blocks.
+Quote the minimum that makes the item reviewable (5–15 lines per block), each
+with a real `path:line` → `context[]`. In `repo` mode, `diff` may be empty or a
+short excerpt; findings still anchor to real paths.
 
 ### 5. Review with the multi-agent fan-out
 
 Read `references/multi-agent-review.md` and follow it. Run the fan-out **once
-over the whole change set** — not per change: discover every relevant review lens
-installed in the environment, spawn one unnamed `general-purpose` subagent per
-lens on `model: "sonnet"` to load and apply it, and merge everything they return
-into one list. The reference owns the details — which tools count as lenses,
-where to look for them, how the builtin `code-review` command is applied, the
-wire format each lens returns, and the rule for routing a finding onto a queue
-item or into `structural[]`.
+over the whole surface** — not per queue item.
 
-Between them the lenses cover correctness bugs *and* long-run quality (AI slop,
-refactor and abstraction opportunities, dead code, duplication) *and* conformance
-to standards and spec — whatever the installed lenses cover. Skip any lens that
-genuinely has no context and say so rather than faking findings.
+1. Discover every relevant review lens (skills *and* commands).
+2. If `lenses` was set, **keep only names on that allow-list** (match skill
+   slugs and command names; unknown names are an error to surface, not a
+   silent skip of the whole run). If `lenses` was omitted, keep all applicable.
+3. Spawn one unnamed `general-purpose` subagent per remaining lens on
+   `model: "sonnet"`. Pass the **resolved scope** (mode, base/range, paths,
+   working-tree flag) into each prompt so lenses do not re-widen or re-narrow.
+4. Merge, de-duplicate, rank by severity. Route onto queue items or
+   `structural[]`.
 
-De-duplicate and rank the merged findings by severity. File real concerns only —
-a change that collects no findings gets an empty `comments` list.
+Skip a lens that genuinely has no context and say so. A queue item with no
+findings gets `comments: []`.
 
 ### 6. Write the overview and the file
 
 Write the three `overview` fields:
 
-- **`what`** — the overall intent across all commits, 2–4 sentences, synthesized
-  from the commit walk in step 2 and the net diff, not a file-by-file list.
-- **`scope_line`** — one line: `M` semantic changes queued against `N`
-  bookkeeping edits skipped.
-- **`verdict`** — does the change, taken together, earn its place? Take a
-  position. Draw on `structural[]`: architectural direction, missing tests across
-  the board, scope creep, a cleaner decomposition, whether it should be split. Do
-  not hedge into a neutral recap.
+- **`what`** — 2–4 sentences: overall intent of the diff, or the audit’s focus
+  for `repo` / `paths`.
+- **`scope_line`** — one line including **mode**, what was queued, bookkeeping
+  skipped (if any), and which lenses ran (or “all applicable”).
+- **`verdict`** — a position. Draw on `structural[]`. Do not hedge into a
+  neutral recap.
 
-Assemble everything into one object per `references/review-json.md` and write it
-to `<workdir>/review.json`, where `<workdir>` is as `review-json.md` defines it.
+Assemble per `references/review-json.md` → `<workdir>/review.json`.
 
-Report that path. **When `caller` names a consumer, stop here** — the file is the
-handoff, and the consumer presents it.
+Report that path. **When `caller` names a consumer, stop here.**
 
 ### 7. Standalone ending
 
-**Only when `caller` is `none`.** Print a short summary and nothing more — no
-walkthrough, no per-change briefings:
+**Only when `caller` is `none`.** Short summary only:
 
-- the scope line (base, files, +/-);
-- `M` semantic changes queued, `N` bookkeeping edits skipped;
-- the verdict in a sentence or two;
-- the findings ranked by severity, each as one line: severity, `path:line`, the
-  finding, and its `source` lens in brackets;
-- the `review.json` path.
+- mode + scope line;
+- queue size (and bookkeeping skipped, if any);
+- lenses that ran;
+- verdict in a sentence or two;
+- findings ranked by severity: severity, `path:line`, finding, `[source]`;
+- `review.json` path.
 
-Then stop. If they want the changes walked one at a time, that's
-`interactive-code-review`; as a browsable page, `ui-code-review`. Say so if the
-findings list is long enough that reading it in the terminal is the wrong shape.
+Then stop. Offer `interactive-code-review` or `ui-code-review` when a long
+list is the wrong shape for the terminal.
 
 ## Notes
 
-- Keep change `id`s short and stable (`c1`, `c2`, …); consumers anchor to them.
-- Never drop a change. The only changes that skip the queue are the ones matching
-  a bookkeeping category in `references/change-classification.md`. A semantic
-  change is never omitted for being small, obvious, or free of findings.
-- This skill posts nothing and edits nothing. A lens that wants to act is stopped
-  at its findings — see `references/multi-agent-review.md`.
-- A `suggested_fix` is recorded, never applied. Whether it is offered, applied, or
-  ignored is the consumer's decision.
+- Keep change `id`s short and stable (`c1`, `c2`, …).
+- Never drop a queued semantic change or audit area because it is small or
+  unflagged. Only `diff`-mode bookkeeping is collapsed.
+- This skill posts nothing and edits nothing.
+- A `suggested_fix` is recorded, never applied.
+- Individual lenses are also invocable **standalone** (their own skills); this
+  skill is the multi-lens orchestrator and the producer of `review.json`.

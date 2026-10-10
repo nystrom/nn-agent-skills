@@ -57,6 +57,13 @@ flags, commented-out blocks — with removal proposals. Treats public/exported
 API conservatively and looks for callers in other repos (`gh search`, monorepo
 siblings) before calling something dead. Standalone or via the fan-out.
 
+### ai-slop-code-review
+
+Ruthless AI-slop lens: narrating comments, needless wrappers, impossible
+defensive checks, enterprise cosplay, verbose restatements of one-line idioms,
+duplicate thoroughness, theatrical tests. Persistent multi-pass; proposes
+deletion or the tight rewrite. Standalone or via the fan-out.
+
 ### interactive-code-review
 
 Walk a reviewer through a change set **one change at a time**, interactively —
@@ -142,8 +149,9 @@ codex plugin add nn-agent-skills@nn-agent-skills
 
 Invoke the skills as `$run-review-lenses`, `$adversarial-review`,
 `$performance-code-review`, `$risk-assessment`, `$test-coverage-code-review`,
-`$dead-code-code-review`, `$interactive-code-review`, `$ui-code-review`, and
-`$evolve`, or describe a matching task and let Codex select the skill.
+`$dead-code-code-review`, `$ai-slop-code-review`, `$interactive-code-review`,
+`$ui-code-review`, and `$evolve`, or describe a matching task and let Codex
+select the skill.
 
 ## Install with Antigravity
 
