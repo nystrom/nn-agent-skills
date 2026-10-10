@@ -25,11 +25,15 @@ its description happens to spell out "diff" or "emits findings." Descriptions
 vary in verbosity: a terse one like "Code Review Guidelines" is as much a review
 lens as a paragraph-long one — **when a tool reads as a code-review tool at all,
 include it.** Today that typically pulls in general code/adversarial review,
-security review, standards/spec review, code-quality/simplification review (e.g.
-`simplify`), any project-specific review skill, and — **when it is installed** —
-the builtin `code-review` command. But **select by
-what the tool is, not by a fixed list**, so new review lenses are picked up
-automatically and removed ones drop out.
+performance review, risk assessment, test-coverage review, dead-code review,
+security review, standards/spec review,
+code-quality/simplification review (e.g. `simplify`), any project-specific
+review skill, and — **when it is installed** — the builtin `code-review`
+command. This plugin ships `adversarial-review`, `performance-code-review`,
+`risk-assessment`, `test-coverage-code-review`, and `dead-code-code-review` as
+first-class lenses — **include each whenever it appears in the available-skills
+list.** Still **select by what the tool is, not by a fixed list**, so other
+review lenses are picked up automatically and removed ones drop out.
 
 Look in two places, because lenses ship in two forms:
 
@@ -67,7 +71,10 @@ handled at the merge step, not by pruning lenses here.
 Exclude only:
 
 - **`run-review-lenses` itself and its consumers** (`interactive-code-review`,
-  `ui-code-review`) — no recursion.
+  `ui-code-review`) — no recursion. Do **not** exclude the lens skills that ship
+  beside it (`adversarial-review`, `performance-code-review`, `risk-assessment`,
+  `test-coverage-code-review`, `dead-code-code-review`) — those *are* the
+  fan-out.
 - Tools that don't review code — diagnosis, verification, run/build,
   authoring/scaffolding helpers, etc. They critique nothing. (A tool that
   *reviews* code quality and then offers to apply the change — e.g. `simplify` —
