@@ -1,6 +1,6 @@
 # nn-agent-skills
 
-Installable agent skills and plugins for Claude Code, Codex, and `agy`.
+Installable agent skills and plugins for Claude Code, Codex, and Antigravity.
 
 ## Skills
 
@@ -14,9 +14,55 @@ the context each change needs, then fans out a parallel subagent per lens and
 merges their findings into one severity-ranked list attached to the changes they
 land on.
 
-It is the basis for the two skills below — both run it first and present the
-`review.json` it writes. Run on its own, it prints a short ranked summary for
-when you want the findings and nothing more.
+It is the basis for the two presentation skills below — both run it first and
+present the `review.json` it writes. Run on its own, it prints a short ranked
+summary for when you want the findings and nothing more.
+
+This plugin also ships **review lenses** that `run-review-lenses` fans out to
+automatically whenever they are installed (they are, with this plugin):
+
+### adversarial-review
+
+Assume the change is subtly wrong and find how it fails. Expensive, dangerous,
+and hard-to-detect failures: auth and trust boundaries, data loss, races,
+retry/idempotency holes, migration hazards, observability gaps. Material
+findings only, each with a concrete fix. Also usable on its own when you want
+just the adversarial pass.
+
+### performance-code-review
+
+Performance lens over the change set: complexity regressions, N+1 and chatty
+I/O, unbounded work, hot-path allocations, lock contention, cache misuse.
+Prefers complexity- or scale-backed claims over taste. Standalone or via the
+fan-out.
+
+### risk-assessment
+
+Shipping-risk lens: blast radius, rollback safety, operability and
+observability, security/privacy exposure, data/migration hazard, dependency
+risk, release readiness. Go/no-go oriented. Standalone or via the fan-out.
+
+### test-coverage-code-review
+
+Test-coverage lens: missing or weak tests for new and changed behavior,
+untested failure/edge paths, assertions that would not catch the bug, brittle
+snapshots, skipped or deleted tests without replacement — and useless tests
+(tautologies, duplicates, mock-only, coverage theater) with a prune proposal.
+Behavioral coverage, not a line-percent scolding. Standalone or via the fan-out.
+
+### dead-code-code-review
+
+Dead-code lens: unreachable helpers, unused exports, orphaned modules, stale
+flags, commented-out blocks — with removal proposals. Treats public/exported
+API conservatively and looks for callers in other repos (`gh search`, monorepo
+siblings) before calling something dead. Standalone or via the fan-out.
+
+### ai-slop-code-review
+
+Ruthless AI-slop lens: narrating comments, needless wrappers, impossible
+defensive checks, enterprise cosplay, verbose restatements of one-line idioms,
+duplicate thoroughness, theatrical tests. Persistent multi-pass; proposes
+deletion or the tight rewrite. Standalone or via the fan-out.
 
 ### interactive-code-review
 
@@ -65,7 +111,7 @@ candidate mutations in isolated git worktrees, evaluates them with a
 user-defined fitness function, and retains the strongest result across
 iterations.
 
-Claude Code and `agy` receive the Evolve commands, agents, hooks, and scripts.
+Claude Code and Antigravity receive the Evolve commands, agents, hooks, and scripts.
 Codex receives a native `$evolve` skill that runs the same scripts without
 depending on Claude's stop hook.
 
@@ -101,17 +147,19 @@ codex plugin marketplace add nystrom/nn-agent-skills
 codex plugin add nn-agent-skills@nn-agent-skills
 ```
 
-Invoke the skills as `$run-review-lenses`, `$interactive-code-review`,
+Invoke the skills as `$run-review-lenses`, `$adversarial-review`,
+`$performance-code-review`, `$risk-assessment`, `$test-coverage-code-review`,
+`$dead-code-code-review`, `$ai-slop-code-review`, `$interactive-code-review`,
 `$ui-code-review`, and `$evolve`, or describe a matching task and let Codex
 select the skill.
 
-## Install with agy
+## Install with Antigravity
 
 ```bash
 git clone https://github.com/nystrom/nn-agent-skills.git
-agy plugin install ./nn-agent-skills
+agy plugin install ./nn-agent-skills/plugins/nn-agent-skills
 ```
 
-`agy` installs from the cloned checkout rather than a remote marketplace, so
-`git pull` in that directory is how you update. The skills are the same four;
+Antigravity installs from the cloned checkout rather than a remote marketplace, so
+`git pull` in that directory is how you update. The skills are the same set;
 describe a matching task and let the agent select one.

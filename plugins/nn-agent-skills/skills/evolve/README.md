@@ -1,6 +1,6 @@
 # Evolve
 
-LLM-driven evolutionary code optimizer for Claude Code, Codex, and `agy`, inspired by Google
+LLM-driven evolutionary code optimizer for Claude Code, Codex, and Antigravity, inspired by Google
 DeepMind's AlphaEvolve and the [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve)
 implementation.
 
@@ -70,7 +70,7 @@ codex plugin add evolve@nn-agent-skills
 Invoke `$evolve` or ask Codex to optimize a target against a measurable fitness
 function. The native Codex skill drives the iteration loop directly.
 
-### agy
+### Antigravity
 
 From a checkout of `nn-agent-skills`:
 
@@ -78,7 +78,7 @@ From a checkout of `nn-agent-skills`:
 agy plugin install ./plugins/nn-agent-skills
 ```
 
-`agy` imports the Evolve commands as skills and also installs its agents and
+Antigravity imports the Evolve commands as skills and also installs its agents and
 hooks.
 
 ## Requirements
@@ -110,7 +110,7 @@ In Claude Code, use the namespaced commands:
 /nn-agent-skills:evolve-stop
 ```
 
-In Codex or `agy`, invoke the installed Evolve skill or ask naturally, for
+In Codex or Antigravity, invoke the installed Evolve skill or ask naturally, for
 example: “Use Evolve to optimize the sort function; run `make bench` and
 maximize operations per second.”
 

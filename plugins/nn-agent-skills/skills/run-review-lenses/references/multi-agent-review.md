@@ -18,18 +18,47 @@ at the right change.
 
 ## Discover which lenses to run
 
+### Optional allow-list (`lenses` input)
+
+When the caller passes **`lenses`** (a list of skill slugs and/or command
+names), the fan-out is restricted to that set after discovery:
+
+1. Discover candidates as usual (below).
+2. Keep a candidate only if its skill slug or command name appears in
+   `lenses` (case-sensitive slug match; accept common aliases like
+   `code-review` for the builtin command).
+3. If a name in `lenses` matches nothing installed, **surface that** — do not
+   pretend it ran. Continue with the ones that matched.
+4. If `lenses` is omitted, every applicable discovered lens runs (default).
+
+Consumers (`interactive-code-review`, `ui-code-review`) pass `lenses` when the
+user asks for specific lenses (“just adversarial”, “performance and dead
+code”, any other installed review skill or command). Standalone
+`run-review-lenses` does the same when the user names them.
+
+Each spawned lens also receives the **resolved review scope** (mode `diff` |
+`repo` | `paths`, base/range, pathspecs, working-tree flag) from
+`references/review-scope.md` so it reviews the same surface as the
+orchestrator.
+
+### What counts as a lens
+
 At review time, select the **review lenses**: tools whose *purpose is
-reviewing/critiquing/auditing code* — a PR, a branch, a diff, a change set, or
-code quality generally. Judge this by what the tool **is for**, not by whether
-its description happens to spell out "diff" or "emits findings." Descriptions
+reviewing/critiquing/auditing code* — a PR, a branch, a diff, a change set, a
+whole repo, or code quality generally. Judge by what the tool **is for**, not
+by whether its description spells out "diff" or "emits findings." Descriptions
 vary in verbosity: a terse one like "Code Review Guidelines" is as much a review
 lens as a paragraph-long one — **when a tool reads as a code-review tool at all,
 include it.** Today that typically pulls in general code/adversarial review,
-security review, standards/spec review, code-quality/simplification review (e.g.
-`simplify`), any project-specific review skill, and — **when it is installed** —
-the builtin `code-review` command. But **select by
-what the tool is, not by a fixed list**, so new review lenses are picked up
-automatically and removed ones drop out.
+performance review, risk assessment, test-coverage review, dead-code review,
+AI-slop review, security review, standards/spec review,
+code-quality/simplification review (e.g. `simplify`), any project-specific
+review skill, and — **when it is installed** — the builtin `code-review`
+command. This plugin ships `adversarial-review`, `performance-code-review`,
+`risk-assessment`, `test-coverage-code-review`, `dead-code-code-review`, and
+`ai-slop-code-review` as first-class lenses — **include each whenever it
+appears in the available-skills list.** Still **select by what the tool is, not by a fixed list**, so other
+review lenses are picked up automatically and removed ones drop out.
 
 Look in two places, because lenses ship in two forms:
 
@@ -67,7 +96,10 @@ handled at the merge step, not by pruning lenses here.
 Exclude only:
 
 - **`run-review-lenses` itself and its consumers** (`interactive-code-review`,
-  `ui-code-review`) — no recursion.
+  `ui-code-review`) — no recursion. Do **not** exclude the lens skills that ship
+  beside it (`adversarial-review`, `performance-code-review`, `risk-assessment`,
+  `test-coverage-code-review`, `dead-code-code-review`, `ai-slop-code-review`)
+  — those *are* the fan-out.
 - Tools that don't review code — diagnosis, verification, run/build,
   authoring/scaffolding helpers, etc. They critique nothing. (A tool that
   *reviews* code quality and then offers to apply the change — e.g. `simplify` —
@@ -135,8 +167,10 @@ Each prompt must:
     would execute all of those steps — the threshold filter and the final GitHub
     post — and hand back a rendered PR comment instead of structured findings, so
     do not invoke it that way; read-and-apply is the only path for this lens.
-- Include the **scope command** from step 1 (the net diff against the review
-  base) and the commit list.
+- Include the **resolved scope** from step 1: `mode` (`diff` | `repo` |
+  `paths`), base/range or pathspecs, working-tree flag, the scope command or
+  tree inventory used, and (for `diff`) the commit list. Instruct the lens not
+  to silently widen or narrow that surface.
 - **Override the lens's native output format.** Review lenses natively emit prose
   (Summary/Must-fix/Suggestions, ship/no-ship blobs). That prose can't be
   attached to per-change queue items, so require a structured per-finding list

@@ -26,8 +26,10 @@ doesn't own.
 ```jsonc
 {
   "title": "string — headline for the review",
-  "scope": "string — e.g. 'git diff main...HEAD  (12 files, +340 -88)'",
-  "base": "string — the ref the net diff was taken against, e.g. 'origin/main'",
+  "scope": "string — include mode: e.g. 'diff: git diff main...HEAD (12 files, +340 -88)' or 'repo: audit of src/ and services/' or 'paths: auth/'",
+  "base": "string — ref for diff mode (e.g. 'origin/main'), HEAD for repo, or pathspecs summary for paths",
+  "mode": "string, optional — 'diff' | 'repo' | 'paths'",
+  "lenses_run": ["adversarial-review", "code-review"],  // optional: which lenses actually ran
   "generated_at": "string, optional — ISO 8601",
 
   "overview": {                   // the change as a whole (workflow step 6)
