@@ -1,21 +1,31 @@
 {
-  "source": "Can AI reviewers catch the bugs that change scientific results? (reviewer-eval-public, October 2026). Frozen public SciML PRs; mechanisms below are the report's own descriptions.",
-  "pinning": "head and base are null until pinned. Pin head to the PR's last commit before any later fix landed, and base to its merge base, before the first run; a case with a null head or base is skipped by score.py.",
+  "source": "Seed set: frozen SciML PRs from a published October 2026 reviewer evaluation, plus clean controls. Defects marked source=report are the report's descriptions; source=fix-commit mechanisms come from the commit that later fixed them.",
+  "pinning": "head is the last PR commit before the fix commits listed in fixed_by; base is its merge base with the default branch. Controls are merged PRs whose changed source files received no later fix. A case with a null head or base is skipped by score.py.",
   "cases": [
     {
       "id": "sii-191",
       "repo": "SciML/SymbolicIndexingInterface.jl",
       "pr": 191,
       "url": "https://github.com/SciML/SymbolicIndexingInterface.jl/pull/191",
-      "head": null,
-      "base": null,
+      "head": "2e5064e966732cb407d655805d9970acc06d2f5c",
+      "base": "b0724b8d8fbb8cecac9c2f1ebbcb4022067feaff",
       "kind": "defect",
       "defects": [
         {
           "id": "sii-191-extension-dispatch",
           "category": "extension contract",
           "mechanism": "Array queries now accumulate into one set; a custom scalar expression's public indexing method is honored for the bare expression but bypassed when the expression sits inside an array, so a solver accessor takes the wrong indexing path and throws instead of returning a time-dependent value.",
-          "probe_hint": "Define a custom expression type implementing the public indexing interface; query it bare and inside an array on base and head."
+          "probe_hint": "Define a custom expression type implementing the public indexing interface; query it bare and inside an array on base and head.",
+          "source": "report",
+          "fixed_by": "fedb68a"
+        },
+        {
+          "id": "sii-191-nothing-index",
+          "category": "compatibility",
+          "source": "fix-commit",
+          "fixed_by": "522f0dd",
+          "mechanism": "The accumulating lookup treats a found timeseries index of `nothing` as absent, so a timeseries parameter whose timeseries index is `nothing` disappears from get_all_timeseries_indexes for both scalar and array queries.",
+          "probe_hint": "Build a SymbolCache with a timeseries parameter whose timeseries_idx is nothing and query it bare and inside an array on base and head."
         }
       ]
     },
@@ -24,15 +34,17 @@
       "repo": "SciML/Evolutionary.jl",
       "pr": 189,
       "url": "https://github.com/SciML/Evolutionary.jl/pull/189",
-      "head": null,
-      "base": null,
+      "head": "09a6f10574639e4737084e8bf1098352e759463a",
+      "base": "d5bf1dd54c8c29011e57349a20b56c1c96eaac69",
       "kind": "defect",
       "defects": [
         {
           "id": "evolutionary-189-zero-step",
           "category": "degenerate numerics",
           "mechanism": "CMA-ES now uses steps after boundary clipping; a point clipped back onto its parent has a zero step, and the negative-weight covariance update divides by the step's squared length (Inf), then multiplies by the zero outer product (NaN), terminating a well-defined bounded optimization at the wrong answer.",
-          "probe_hint": "Run a bounded problem whose optimum sits on a bound so clipping returns parents; check the covariance matrix for Inf/NaN on head vs base."
+          "probe_hint": "Run a bounded problem whose optimum sits on a bound so clipping returns parents; check the covariance matrix for Inf/NaN on head vs base.",
+          "source": "report",
+          "fixed_by": "3fa623e"
         }
       ]
     },
@@ -41,21 +53,25 @@
       "repo": "SciML/SciMLOperators.jl",
       "pr": 438,
       "url": "https://github.com/SciML/SciMLOperators.jl/pull/438",
-      "head": null,
-      "base": null,
+      "head": "93865dfc9b432a3a84cd95e8207cb543029ccdda",
+      "base": "9cf74167511a26d6a9be87b03f786ccd2fe78fa7",
       "kind": "defect",
       "defects": [
         {
           "id": "scimloperators-438-immutable-storage",
           "category": "mutability",
           "mechanism": "Composed-operator coefficient updates now require mutation; with immutable factor storage an update must return a new operator, so a previously valid in-place tensor-sum application throws.",
-          "probe_hint": "Build a tensor-sum operator over immutable factors and apply it in place after update_coefficients on base and head."
+          "probe_hint": "Build a tensor-sum operator over immutable factors and apply it in place after update_coefficients on base and head.",
+          "source": "report",
+          "fixed_by": "5fe3f62"
         },
         {
           "id": "scimloperators-438-callback-count",
           "category": "callbacks and state",
           "mechanism": "The patch changes how often update callbacks execute, which changes results when callbacks carry state or change coefficients on each call.",
-          "probe_hint": "Attach an update function that counts its calls; compare the count per apply on base and head."
+          "probe_hint": "Attach an update function that counts its calls; compare the count per apply on base and head.",
+          "source": "report",
+          "fixed_by": "5fe3f62"
         }
       ]
     },
@@ -64,15 +80,17 @@
       "repo": "SciML/Dedalus.jl",
       "pr": 21,
       "url": "https://github.com/SciML/Dedalus.jl/pull/21",
-      "head": null,
-      "base": null,
+      "head": "728f9eec08cc69b137c2bc1a800c82998eb829c6",
+      "base": "7d9e9b57e303c967b333edc658d3301d1e6ce570",
       "kind": "defect",
       "defects": [
         {
           "id": "dedalus-21-operand-field",
           "category": "extension contract",
           "mechanism": "A generic linear-operator accessor now reads an operand field directly; built-in types have it, but a valid downstream subtype that supplies the documented args representation throws a field-access error.",
-          "probe_hint": "Define an operator subtype that implements only the documented args interface; call the accessor on base and head."
+          "probe_hint": "Define an operator subtype that implements only the documented args interface; call the accessor on base and head.",
+          "source": "report",
+          "fixed_by": "8400a28"
         }
       ]
     },
@@ -81,15 +99,17 @@
       "repo": "SciML/DataInterpolations.jl",
       "pr": 617,
       "url": "https://github.com/SciML/DataInterpolations.jl/pull/617",
-      "head": null,
-      "base": null,
+      "head": "87f2e2eec7175dc6b87a6e52d101142cecc2388f",
+      "base": "b98db80406869b7664d5760ed48785f3f2d5cad6",
       "kind": "defect",
       "defects": [
         {
-          "id": "datainterpolations-617-inference",
-          "category": "type inference",
-          "mechanism": null,
-          "probe_hint": "The report lists this as an interpolation inference case without detail; fill the mechanism from the report's evidence.json before scoring catches."
+          "id": "datainterpolations-617-shared-cache-eltype",
+          "category": "type contract",
+          "source": "fix-commit",
+          "fixed_by": "cfa4225",
+          "mechanism": "Multi-field parameter caches are now parameterized by one shared element type (the struct field becomes ParameterCache{pType}, with pType taken from a single coefficient field), so construction fails when coefficient fields legitimately differ in type: unit-carrying (Unitful) data and mixed-precision u/du in Hermite splines.",
+          "probe_hint": "Construct a CubicHermiteSpline with Float32 u and Float64 du, and any cached interpolant over Unitful data, on base and head."
         }
       ]
     },
@@ -98,15 +118,17 @@
       "repo": "SciML/Sundials.jl",
       "pr": 573,
       "url": "https://github.com/SciML/Sundials.jl/pull/573",
-      "head": null,
-      "base": null,
+      "head": "3b3aaf893db926fc4c4469d183807b71dfb99756",
+      "base": "28d529b296155630051e8c3ddc9f886e862a4039",
       "kind": "defect",
       "defects": [
         {
-          "id": "sundials-573-api-behavior",
+          "id": "sundials-573-inner-stepper-mem-type",
           "category": "compatibility",
-          "mechanism": null,
-          "probe_hint": "The report lists this as a solver API behavior case without detail; fill the mechanism from the report's evidence.json before scoring catches."
+          "source": "fix-commit",
+          "fixed_by": "f299975",
+          "mechanism": "The new ARKodeCreateMRIStepInnerStepper binding declares its memory argument as ARKStepMemPtr, but the C API takes void* and accepts any ARKODE stepper memory; passing an ERKStep handle as the MRI inner stepper fails to convert and throws.",
+          "probe_hint": "Create an ERKStep integrator and pass its memory to ARKodeCreateMRIStepInnerStepper."
         }
       ]
     },
@@ -115,15 +137,25 @@
       "repo": "SciML/NonlinearSolve.jl",
       "pr": 1376,
       "url": "https://github.com/SciML/NonlinearSolve.jl/pull/1376",
-      "head": null,
-      "base": null,
+      "head": "fc902b05e5a6b578f506010e2f0aa30f6a365578",
+      "base": "2275450e86ca269a74a391e770306e145a101d46",
       "kind": "defect",
       "defects": [
         {
-          "id": "nonlinearsolve-1376-numerics",
+          "id": "nonlinearsolve-1376-midpoint-overflow",
           "category": "degenerate numerics",
-          "mechanism": null,
-          "probe_hint": "The report lists this as a nonlinear numerics case without detail; fill the mechanism from the report's evidence.json before scoring catches."
+          "source": "fix-commit",
+          "fixed_by": "fc840b20",
+          "mechanism": "NewtonBisection's bisection fallback computes (left + right) / 2, which overflows to Inf for brackets near floatmax, so the solver evaluates f outside the bracket and returns non-finite or wrong results instead of a root inside the bracket.",
+          "probe_hint": "Solve a smooth monotone function on a bracket like (1e308, 1.7e308) with abstol = 0 and check every evaluated x stays finite and inside the bracket."
+        },
+        {
+          "id": "nonlinearsolve-1376-nan-residual",
+          "category": "degenerate numerics",
+          "source": "fix-commit",
+          "fixed_by": "fc840b20",
+          "mechanism": "A NaN residual at an endpoint or trial point is not detected; the sign comparison treats NaN as a sign, so the bracket is updated on garbage and the solver can discard the side containing the root or report success.",
+          "probe_hint": "Use f that returns NaN at one trial point (e.g. the midpoint) and check the retcode and that the returned bracket still encloses the root."
         }
       ]
     },
@@ -132,17 +164,57 @@
       "repo": "SciML/LinearSolve.jl",
       "pr": 1378,
       "url": "https://github.com/SciML/LinearSolve.jl/pull/1378",
-      "head": null,
-      "base": null,
+      "head": "1678314a6ba468805747e4a8918082c1a9f95327",
+      "base": "c7ff3bee041e70e85dcf89acabcae7aee634a82c",
       "kind": "defect",
       "defects": [
         {
-          "id": "linearsolve-1378-cache-reuse",
+          "id": "linearsolve-1378-block-output-alias",
+          "category": "aliasing",
+          "source": "fix-commit",
+          "fixed_by": "34424017",
+          "mechanism": "Reusing a block Krylov workspace rebinds its solution matrix X to the caller's u, so the workspace's output aliases caller storage; later solves or caller writes corrupt one another's results.",
+          "probe_hint": "Solve with a matrix right-hand side twice through one cache, keeping the first solution, and compare it with a fresh solve; also try u aliasing b."
+        },
+        {
+          "id": "linearsolve-1378-fixed-memory-reuse",
           "category": "cache reuse",
-          "mechanism": null,
-          "probe_hint": "The report lists this as a solver cache-reuse case without detail; fill the mechanism from the report's evidence.json before scoring catches."
+          "source": "fix-commit",
+          "fixed_by": "34424017",
+          "mechanism": "Workspace reuse accepts any workspace whose subspace is at least the required size, so fixed-memory methods (restarted GMRES, DIOM, DQGMRES) keep running with the old, larger subspace after the requested restart or memory decreases, silently changing the algorithm and its results.",
+          "probe_hint": "Solve with restarted GMRES at memory 20, then reinit with memory 5, and compare iterations and residual history to a fresh memory-5 solve."
         }
       ]
+    },
+    {
+      "id": "scimloperators-433",
+      "repo": "SciML/SciMLOperators.jl",
+      "pr": 433,
+      "url": "https://github.com/SciML/SciMLOperators.jl/pull/433",
+      "head": "75e13ef83e9c97abc6c7ba5d5695af1e86673d8b",
+      "base": "6ed317755cabbc1fede0cdbfaaa1fd9eaa953016",
+      "kind": "control",
+      "defects": []
+    },
+    {
+      "id": "datainterpolations-610",
+      "repo": "SciML/DataInterpolations.jl",
+      "pr": 610,
+      "url": "https://github.com/SciML/DataInterpolations.jl/pull/610",
+      "head": "78189d6c605a5fc4a62cab4d2f37a4fe3c35c570",
+      "base": "5dd8f0fa2637caa6a883f1344fd7dfc34c880e24",
+      "kind": "control",
+      "defects": []
+    },
+    {
+      "id": "sii-157",
+      "repo": "SciML/SymbolicIndexingInterface.jl",
+      "pr": 157,
+      "url": "https://github.com/SciML/SymbolicIndexingInterface.jl/pull/157",
+      "head": "a612401cefe31f9c104ecf1dea4e62590c4062eb",
+      "base": "9097bc12aa5be1697476c8ae7be368387716214b",
+      "kind": "control",
+      "defects": []
     }
   ]
 }
