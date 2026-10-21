@@ -13,7 +13,7 @@ page="$(cat "$out" 2>/dev/null || echo '')"
 # Every value in the fixture is a unique token, so a missing one means a field
 # the contract documents never reaches the page.
 for tok in OVERVIEW_WHAT OVERVIEW_SCOPELINE OVERVIEW_VERDICT OVERVIEW_XCUT \
-           ROUTINE_LINE CHANGE_TITLE \
+           LENSES_RUN ROUTINE_LINE CHANGE_TITLE \
            BRIEF_WHAT BRIEF_WHY BRIEF_USES BRIEF_CONSUMES BRIEF_TESTED \
            CTX_LABEL CTX_CODE FIND_TITLE FIND_BODY FIND_FIX; do
   contains "renders $tok" "$page" "$tok"
