@@ -4,8 +4,8 @@ description: >-
   Adversarial code review of a change set — assume the change is subtly wrong
   and find the ways it fails, then prove it by running code against head and
   base. Hunts expensive, dangerous, and hard-to-detect failures: broken
-  extension contracts and downstream subtypes, degenerate numerics (zero steps,
-  NaN/Inf), mutability and cache-reuse hazards, auth and trust-boundary gaps,
+  extension contracts and downstream implementations, boundary and degenerate
+  inputs, mutability and cache-reuse hazards, auth and trust-boundary gaps,
   data loss, races, retry/idempotency holes, migration and version-skew
   hazards. Reports only material findings, each with a mechanism, evidence, and
   a concrete fix. Use when asked to review adversarially, stress-test a PR or
@@ -56,7 +56,7 @@ edits:
 
 - every public function, method, or interface whose behavior changed, and
   every caller-visible effect (return values, thrown errors, mutation,
-  callbacks invoked, numerical results);
+  callbacks invoked, writes, emitted events);
 - every **extension point** the changed code reaches: methods downstream code
   can overload or implement, abstract types or interfaces others subtype,
   documented accessors, plugin hooks, generic containers of user types;
@@ -83,8 +83,8 @@ arguing them:
   the suite tests what the author thought of; the probe tests what you suspect.
 - Target the contracts from step 1 that the tests skip: a custom subtype that
   implements only the documented interface, a value wrapped in a container, a
-  degenerate numeric input, an immutable variant, a reused cache, a callback
-  that counts its calls.
+  boundary or degenerate input, an immutable variant, a reused cache, a
+  callback that counts its calls.
 - A probe that shows base working and head failing (or producing a different
   result) makes the finding `verified`. Record the probe in the finding.
 - If you cannot execute (no runtime, no tools, dependencies won't build), say
@@ -93,9 +93,10 @@ arguing them:
 
 ### 4. Diagnose the mechanism
 
-Observing a symptom is not a diagnosis. "The result goes NaN" is a symptom;
-"the step can be zero after clamping, so the update divides by its squared
-length, giving Inf, then `Inf × 0 = NaN`" is a mechanism. A fix aimed at
+Observing a symptom is not a diagnosis. "Users sometimes see another
+account's data" is a symptom; "the new cache key omits the tenant id, so the
+second tenant to request a page reads the first tenant's entry" is a
+mechanism. A fix aimed at
 the wrong mechanism leaves the defect in place. Trace each failure to the
 specific operation, branch, or code-path decision that causes it before filing.
 If you cannot pin it down, file the symptom as `inferred`, say the mechanism
@@ -120,17 +121,18 @@ Prioritize failures that are expensive, dangerous, or hard to detect.
 - compatibility regressions: a previously valid call that now throws, changes
   type, or changes result
 
-**Numerical correctness:**
+**Boundary and degenerate inputs:**
 
-- degenerate inputs: zero-length steps, empty or singleton collections, a norm
-  or denominator that can be zero, points clipped or projected back onto their
-  origin, coincident points, rank-deficient matrices
-- Inf/NaN creation and propagation (`x/0`, `0 × Inf`, `log(0)`, `sqrt` of a
-  tiny negative), and code that keeps iterating on a NaN state or terminates
-  early with a plausible-looking wrong answer
-- ill-conditioning, loss of precision, changed tolerances or defaults, changed
-  numeric types (single vs. double precision, integer vs. float, real vs.
-  complex)
+- empty, singleton, and duplicate collections; zero, negative, and maximum
+  values; a divisor, length, or count that can be zero
+- inputs that only reach a fallback, repair, or clamping path the main path
+  never exercises
+- overflow, truncation, rounding, and precision loss; encodings and unicode;
+  time zones, DST, and leap days; very large or deeply nested inputs
+- sentinel and special values (null, empty string, NaN, default objects)
+  propagating where real data is expected, and code that carries on with a
+  plausible-looking wrong result
+- changed defaults, limits, tolerances, units, or types
 - silent wrong answers — worse than errors, because nothing flags them
 
 **Mutability, state, and caches:**
@@ -139,10 +141,10 @@ Prioritize failures that are expensive, dangerous, or hard to detect.
   immutable, or returning a new object where callers expect an update
 - aliasing: two names for one buffer, mutation of an input the caller still uses
 - cache or workspace reuse after a parameter, size, or type change; stale
-  factorizations or precomputations
+  derived or precomputed data
 - callbacks and hooks: changes to how many times or in what order they run,
-  matters whenever they carry state, are non-idempotent, or change
-  coefficients each call
+  matters whenever they carry state, are non-idempotent, or have side
+  effects
 - changes to which implementation a call resolves to (overload, override,
   or type-based selection) that alter results, not only speed
 
@@ -175,7 +177,7 @@ anchor to a real path through the change.
 The verdict follows from the findings. Do not decide it separately.
 
 - **Regressions block.** If something that worked at base now throws, returns
-  a different type, or produces a different numerical result at head, that is
+  a different type, or produces a different result at head, that is
   at least `high`. There is no "noted but not blocking" for a regression: a
   review that sees the break and approves anyway is as harmful as one that
   misses it.
