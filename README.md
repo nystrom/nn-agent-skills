@@ -30,8 +30,7 @@ degenerate numerics, mutability and cache-reuse hazards, auth and trust
 boundaries, data loss, races, retry/idempotency holes, migration hazards.
 Passing tests never justify an approval, and an observed regression always
 blocks. Material findings only, each with a mechanism, evidence, and a concrete
-fix. Also usable on its own when you want just the adversarial pass. An eval
-set of real scientific-code PRs lives in `skills/adversarial-review/evals/`.
+fix. Also usable on its own when you want just the adversarial pass.
 
 ### performance-code-review
 
