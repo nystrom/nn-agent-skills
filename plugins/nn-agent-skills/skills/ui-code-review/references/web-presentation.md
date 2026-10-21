@@ -55,7 +55,7 @@ Each `changes[]` entry:
 | `files`     | array  | optional `{ path, old, new }` full file text; enables Old/New file |
 | `briefing`  | object | `{ what, why, uses, consumes, tested }` — markdown; omit any     |
 | `context`   | array  | `{ label, path, code, collapsed }` blocks, rendered foldable      |
-| `comments`  | array  | merged findings: `{ severity, line, title, body, source, suggested_fix }` |
+| `comments`  | array  | merged findings: `{ severity, line, title, body, source, suggested_fix, evidence? }` |
 | `diagrams`  | array  | optional before/after box-and-arrow pairs, drawn above the diff |
 | `usage`     | array  | optional "the old way vs. the new way" code pairs, drawn above the diff |
 | `tradeoffs` | object | optional `{ advantages, disadvantages, risks }` for this change |

@@ -23,11 +23,15 @@ automatically whenever they are installed (they are, with this plugin):
 
 ### adversarial-review
 
-Assume the change is subtly wrong and find how it fails. Expensive, dangerous,
-and hard-to-detect failures: auth and trust boundaries, data loss, races,
-retry/idempotency holes, migration hazards, observability gaps. Material
-findings only, each with a concrete fix. Also usable on its own when you want
-just the adversarial pass.
+Assume the change is subtly wrong and find how it fails, then prove it with
+targeted probes run against head and base. Expensive, dangerous, and
+hard-to-detect failures: broken extension contracts and downstream subtypes,
+degenerate numerics, mutability and cache-reuse hazards, auth and trust
+boundaries, data loss, races, retry/idempotency holes, migration hazards.
+Passing tests never justify an approval, and an observed regression always
+blocks. Material findings only, each with a mechanism, evidence, and a concrete
+fix. Also usable on its own when you want just the adversarial pass. An eval
+set of real scientific-code PRs lives in `skills/adversarial-review/evals/`.
 
 ### performance-code-review
 

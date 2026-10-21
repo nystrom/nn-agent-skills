@@ -57,7 +57,7 @@ Pass or honor: `mode`, `base`/range/PR, `paths`, `include_working_tree`.
 One object per finding, field names exactly:
 
 ```
-{ source, path, line, severity, title, body, suggested_fix }
+{ source, path, line, severity, title, body, suggested_fix, evidence }
 ```
 
 - `source` — this lens’s skill slug (e.g. `adversarial-review`)
@@ -68,6 +68,9 @@ One object per finding, field names exactly:
 - `title` — short heading
 - `body` — what is wrong and why it matters
 - `suggested_fix` — smallest concrete fix (or prune/verify steps)
+- `evidence` — optional; `Verified: <probe and result>` or
+  `Inferred: <reasoning; probe that would confirm>`. Required by lenses whose
+  `SKILL.md` says so (e.g. `adversarial-review`).
 
 Also return a one-line headline: `needs-attention` or `approve`.
 

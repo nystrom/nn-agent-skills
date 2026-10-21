@@ -1,0 +1,148 @@
+{
+  "source": "Can AI reviewers catch the bugs that change scientific results? (reviewer-eval-public, October 2026). Frozen public SciML PRs; mechanisms below are the report's own descriptions.",
+  "pinning": "head and base are null until pinned. Pin head to the PR's last commit before any later fix landed, and base to its merge base, before the first run; a case with a null head or base is skipped by score.py.",
+  "cases": [
+    {
+      "id": "sii-191",
+      "repo": "SciML/SymbolicIndexingInterface.jl",
+      "pr": 191,
+      "url": "https://github.com/SciML/SymbolicIndexingInterface.jl/pull/191",
+      "head": null,
+      "base": null,
+      "kind": "defect",
+      "defects": [
+        {
+          "id": "sii-191-extension-dispatch",
+          "category": "extension contract",
+          "mechanism": "Array queries now accumulate into one set; a custom scalar expression's public indexing method is honored for the bare expression but bypassed when the expression sits inside an array, so a solver accessor takes the wrong indexing path and throws instead of returning a time-dependent value.",
+          "probe_hint": "Define a custom expression type implementing the public indexing interface; query it bare and inside an array on base and head."
+        }
+      ]
+    },
+    {
+      "id": "evolutionary-189",
+      "repo": "SciML/Evolutionary.jl",
+      "pr": 189,
+      "url": "https://github.com/SciML/Evolutionary.jl/pull/189",
+      "head": null,
+      "base": null,
+      "kind": "defect",
+      "defects": [
+        {
+          "id": "evolutionary-189-zero-step",
+          "category": "degenerate numerics",
+          "mechanism": "CMA-ES now uses steps after boundary clipping; a point clipped back onto its parent has a zero step, and the negative-weight covariance update divides by the step's squared length (Inf), then multiplies by the zero outer product (NaN), terminating a well-defined bounded optimization at the wrong answer.",
+          "probe_hint": "Run a bounded problem whose optimum sits on a bound so clipping returns parents; check the covariance matrix for Inf/NaN on head vs base."
+        }
+      ]
+    },
+    {
+      "id": "scimloperators-438",
+      "repo": "SciML/SciMLOperators.jl",
+      "pr": 438,
+      "url": "https://github.com/SciML/SciMLOperators.jl/pull/438",
+      "head": null,
+      "base": null,
+      "kind": "defect",
+      "defects": [
+        {
+          "id": "scimloperators-438-immutable-storage",
+          "category": "mutability",
+          "mechanism": "Composed-operator coefficient updates now require mutation; with immutable factor storage an update must return a new operator, so a previously valid in-place tensor-sum application throws.",
+          "probe_hint": "Build a tensor-sum operator over immutable factors and apply it in place after update_coefficients on base and head."
+        },
+        {
+          "id": "scimloperators-438-callback-count",
+          "category": "callbacks and state",
+          "mechanism": "The patch changes how often update callbacks execute, which changes results when callbacks carry state or change coefficients on each call.",
+          "probe_hint": "Attach an update function that counts its calls; compare the count per apply on base and head."
+        }
+      ]
+    },
+    {
+      "id": "dedalus-21",
+      "repo": "SciML/Dedalus.jl",
+      "pr": 21,
+      "url": "https://github.com/SciML/Dedalus.jl/pull/21",
+      "head": null,
+      "base": null,
+      "kind": "defect",
+      "defects": [
+        {
+          "id": "dedalus-21-operand-field",
+          "category": "extension contract",
+          "mechanism": "A generic linear-operator accessor now reads an operand field directly; built-in types have it, but a valid downstream subtype that supplies the documented args representation throws a field-access error.",
+          "probe_hint": "Define an operator subtype that implements only the documented args interface; call the accessor on base and head."
+        }
+      ]
+    },
+    {
+      "id": "datainterpolations-617",
+      "repo": "SciML/DataInterpolations.jl",
+      "pr": 617,
+      "url": "https://github.com/SciML/DataInterpolations.jl/pull/617",
+      "head": null,
+      "base": null,
+      "kind": "defect",
+      "defects": [
+        {
+          "id": "datainterpolations-617-inference",
+          "category": "type inference",
+          "mechanism": null,
+          "probe_hint": "The report lists this as an interpolation inference case without detail; fill the mechanism from the report's evidence.json before scoring catches."
+        }
+      ]
+    },
+    {
+      "id": "sundials-573",
+      "repo": "SciML/Sundials.jl",
+      "pr": 573,
+      "url": "https://github.com/SciML/Sundials.jl/pull/573",
+      "head": null,
+      "base": null,
+      "kind": "defect",
+      "defects": [
+        {
+          "id": "sundials-573-api-behavior",
+          "category": "compatibility",
+          "mechanism": null,
+          "probe_hint": "The report lists this as a solver API behavior case without detail; fill the mechanism from the report's evidence.json before scoring catches."
+        }
+      ]
+    },
+    {
+      "id": "nonlinearsolve-1376",
+      "repo": "SciML/NonlinearSolve.jl",
+      "pr": 1376,
+      "url": "https://github.com/SciML/NonlinearSolve.jl/pull/1376",
+      "head": null,
+      "base": null,
+      "kind": "defect",
+      "defects": [
+        {
+          "id": "nonlinearsolve-1376-numerics",
+          "category": "degenerate numerics",
+          "mechanism": null,
+          "probe_hint": "The report lists this as a nonlinear numerics case without detail; fill the mechanism from the report's evidence.json before scoring catches."
+        }
+      ]
+    },
+    {
+      "id": "linearsolve-1378",
+      "repo": "SciML/LinearSolve.jl",
+      "pr": 1378,
+      "url": "https://github.com/SciML/LinearSolve.jl/pull/1378",
+      "head": null,
+      "base": null,
+      "kind": "defect",
+      "defects": [
+        {
+          "id": "linearsolve-1378-cache-reuse",
+          "category": "cache reuse",
+          "mechanism": null,
+          "probe_hint": "The report lists this as a solver cache-reuse case without detail; fill the mechanism from the report's evidence.json before scoring catches."
+        }
+      ]
+    }
+  ]
+}
