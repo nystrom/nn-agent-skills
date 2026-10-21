@@ -614,6 +614,7 @@ function renderOverview(){
   document.getElementById("overview").innerHTML=`<div class="ov-body">`+
     (o.what?`<h2>What this change does</h2><div>${md(o.what)}</div>`:"")+
     (o.scope_line?`<h2>Scope</h2><div>${md(o.scope_line)}</div>`:"")+
+    ((STATE.lenses_run||[]).length?`<div class="stats">Lenses run: ${STATE.lenses_run.map(esc).join(", ")}</div>`:"")+
     (stats.length?`<div class="stats">${stats.join(" · ")}</div>`:"")+
     (dg?`<h2>Architecture</h2>${dg}`:"")+
     (o.verdict?`<h2>Verdict</h2><div class="verdict">${md(o.verdict)}</div>`:"")+

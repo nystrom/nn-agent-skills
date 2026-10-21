@@ -14,7 +14,7 @@ page="$(cat "$out" 2>/dev/null || echo '')"
 # the contract documents never reaches the screen. The page embeds the whole
 # fixture as its STATE literal, so the HTML always contains every token; check
 # the text the browser actually draws instead.
-tokens=(OVERVIEW_WHAT OVERVIEW_SCOPELINE OVERVIEW_VERDICT OVERVIEW_XCUT
+tokens=(OVERVIEW_WHAT OVERVIEW_SCOPELINE OVERVIEW_VERDICT OVERVIEW_XCUT LENSES_RUN
         ROUTINE_LINE CHANGE_TITLE
         BRIEF_WHAT BRIEF_WHY BRIEF_USES BRIEF_CONSUMES BRIEF_TESTED
         CTX_LABEL CTX_CODE FIND_TITLE FIND_BODY FIND_FIX)
