@@ -2,6 +2,7 @@
   "title": "Fixture review",
   "scope": "git diff base..HEAD (1 file)",
   "base": "origin/main",
+  "lenses_run": ["LENSES_RUN"],
   "overview": {
     "what": "OVERVIEW_WHAT",
     "scope_line": "OVERVIEW_SCOPELINE",
