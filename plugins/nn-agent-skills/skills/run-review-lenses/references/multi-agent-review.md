@@ -55,8 +55,8 @@ AI-slop review, security review, standards/spec review,
 code-quality/simplification review (e.g. `simplify`), any project-specific
 review skill, and — **when it is installed** — the builtin `code-review`
 command. This plugin ships `adversarial-review`, `performance-code-review`,
-`risk-assessment`, `test-coverage-code-review`, `dead-code-code-review`,
-`ai-slop-code-review`, and `numerical-code-review` as first-class lenses — **include each whenever it
+`risk-assessment`, `test-coverage-code-review`, `dead-code-code-review`, and
+`ai-slop-code-review` as first-class lenses — **include each whenever it
 appears in the available-skills list.** Still **select by what the tool is, not by a fixed list**, so other
 review lenses are picked up automatically and removed ones drop out.
 
@@ -98,8 +98,7 @@ Exclude only:
 - **`run-review-lenses` itself and its consumers** (`interactive-code-review`,
   `ui-code-review`) — no recursion. Do **not** exclude the lens skills that ship
   beside it (`adversarial-review`, `performance-code-review`, `risk-assessment`,
-  `test-coverage-code-review`, `dead-code-code-review`, `ai-slop-code-review`,
-  `numerical-code-review`)
+  `test-coverage-code-review`, `dead-code-code-review`, `ai-slop-code-review`)
   — those *are* the fan-out.
 - Tools that don't review code — diagnosis, verification, run/build,
   authoring/scaffolding helpers, etc. They critique nothing. (A tool that

@@ -67,16 +67,6 @@ defensive checks, enterprise cosplay, verbose restatements of one-line idioms,
 duplicate thoroughness, theatrical tests. Persistent multi-pass; proposes
 deletion or the tight rewrite. Standalone or via the fan-out.
 
-### numerical-code-review
-
-Numerical-correctness lens for scientific, statistical, simulation,
-optimization, and solver code: degenerate inputs, NaN/Inf creation and
-propagation, overflow and precision loss, ill-conditioning, changed tolerances
-and stopping criteria, convergence failures that end on a plausible wrong
-answer, broken invariants, and stale caches or factorizations. Proves findings
-with head-vs-base probes and reference computations. Approves immediately when
-a change touches no numerical code. Standalone or via the fan-out.
-
 ### interactive-code-review
 
 Walk a reviewer through a change set **one change at a time**, interactively —
@@ -162,8 +152,7 @@ codex plugin add nn-agent-skills@nn-agent-skills
 
 Invoke the skills as `$run-review-lenses`, `$adversarial-review`,
 `$performance-code-review`, `$risk-assessment`, `$test-coverage-code-review`,
-`$dead-code-code-review`, `$ai-slop-code-review`, `$numerical-code-review`,
-`$interactive-code-review`,
+`$dead-code-code-review`, `$ai-slop-code-review`, `$interactive-code-review`,
 `$ui-code-review`, and `$evolve`, or describe a matching task and let Codex
 select the skill.
 
