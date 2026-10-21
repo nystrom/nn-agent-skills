@@ -677,10 +677,11 @@ function renderFinding(cid,f,fid){
             :(f.symbol?`<span class="src">${esc(f.symbol)}</span>`:"");
   const src=f.source?`<span class="src">[${esc(f.source)}]</span>`:"";
   const sugg=f.suggested_fix?`<div class="sugg"><b>Suggested fix:</b> ${md(f.suggested_fix)}</div>`:"";
+  const evid=f.evidence?`<div class="sugg"><b>Evidence:</b> ${md(f.evidence)}</div>`:"";
   return `<div class="finding" id="${cid}-F${fid}" style="border-left-color:${SEVCOL[s.cls]||"var(--line)"}">`+
     `<div class="f-head"><span class="badge ${s.cls}">${s.label}</span>${jump}${src}</div>`+
     (f.title?`<div class="f-title">${md(f.title)}</div>`:"")+
-    `<div class="f-body">${md(f.body)}</div>${sugg}</div>`;
+    `<div class="f-body">${md(f.body)}</div>${evid}${sugg}</div>`;
 }
 
 function renderContext(blocks){

@@ -95,7 +95,8 @@ doesn't own.
           "body": "Explanation. Supports `code`, **bold**, and newlines.",
           "line": 13,             // optional: new-file line no.
           "symbol": "refresh_token",        // optional alt anchor
-          "suggested_fix": "The smallest edit that resolves it."
+          "suggested_fix": "The smallest edit that resolves it.",
+          "evidence": "Verified: base returns 1.0, head throws."  // optional
         }
       ]
     }
@@ -114,6 +115,10 @@ doesn't own.
 - **`source`** on every finding is the lens that produced it. It is provenance,
   and it never splits the list — the findings stay merged and ranked by severity.
 - **`comments`** are ordered by severity (blocker → praise).
+- **`evidence`** is optional: how the finding was established. It starts with
+  `Verified:` (a probe reproduced it — give the input and the base-vs-head
+  result) or `Inferred:` (reasoned, not run — give the probe that would
+  confirm it). Lenses that execute code, such as `adversarial-review`, fill it.
 - A custom `severity` from some review lens is passed through as-is rather than
   coerced; consumers style unknown values neutrally.
 - **`structural`** holds only what attaches to no single change; a finding that

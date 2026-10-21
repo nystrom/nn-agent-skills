@@ -177,7 +177,7 @@ Each prompt must:
   instead, one object per finding:
 
   ```
-  { source, path, line, severity, title, body, suggested_fix }
+  { source, path, line, severity, title, body, suggested_fix, evidence }
   ```
 
   These are the field names `review-json.md` stores, so a finding is written
@@ -194,6 +194,9 @@ Each prompt must:
   - `body` — the finding itself: what is wrong and why it matters.
   - `suggested_fix` — the concrete change: the smallest edit that resolves it.
     Always ask for it; a consumer may offer or apply it.
+  - `evidence` — optional: `Verified:` plus the probe that reproduced the
+    finding, or `Inferred:` plus the probe that would confirm it. Pass it
+    through when a lens returns it; do not require it of lenses that don't.
 - **A lens must only *return* findings — never act.** No subagent may post to
   GitHub, edit files, or take any other side effect; it hands back the structured
   list and nothing else. Nothing in this skill posts or edits — findings are

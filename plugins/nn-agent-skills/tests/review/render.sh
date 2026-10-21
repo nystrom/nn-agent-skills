@@ -17,7 +17,7 @@ page="$(cat "$out" 2>/dev/null || echo '')"
 tokens=(OVERVIEW_WHAT OVERVIEW_SCOPELINE OVERVIEW_VERDICT OVERVIEW_XCUT LENSES_RUN
         ROUTINE_LINE CHANGE_TITLE
         BRIEF_WHAT BRIEF_WHY BRIEF_USES BRIEF_CONSUMES BRIEF_TESTED
-        CTX_LABEL CTX_CODE FIND_TITLE FIND_BODY FIND_FIX)
+        CTX_LABEL CTX_CODE FIND_TITLE FIND_BODY FIND_FIX FIND_EVIDENCE)
 shown="$(NODE_PATH="${NODE_PATH:-}${NODE_PATH:+:}$(npm root -g 2>/dev/null)" \
          node "$(dirname "$0")/visible_text.js" "$out" 2>&1)"; rc=$?
 if ! command -v node >/dev/null 2>&1 || [[ "$rc" == 77 ]]; then

@@ -32,7 +32,8 @@
       ],
       "comments": [
         {"severity": "high", "source": "code-review", "title": "FIND_TITLE",
-         "body": "FIND_BODY", "line": 20, "suggested_fix": "FIND_FIX"}
+         "body": "FIND_BODY", "line": 20, "suggested_fix": "FIND_FIX",
+         "evidence": "FIND_EVIDENCE"}
       ]
     }
   ]
