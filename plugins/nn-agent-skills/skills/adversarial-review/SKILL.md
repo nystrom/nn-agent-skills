@@ -93,11 +93,11 @@ arguing them:
 
 ### 4. Diagnose the mechanism
 
-Observing a symptom is not a diagnosis. "The covariance goes NaN" is a
-symptom; "`step` is zero after clipping, so the update divides by
-`‖step‖² = 0`, giving Inf, then `Inf × 0 = NaN`" is a mechanism. A fix aimed at
+Observing a symptom is not a diagnosis. "The result goes NaN" is a symptom;
+"the step can be zero after clamping, so the update divides by its squared
+length, giving Inf, then `Inf × 0 = NaN`" is a mechanism. A fix aimed at
 the wrong mechanism leaves the defect in place. Trace each failure to the
-specific operation, branch, or dispatch decision that causes it before filing.
+specific operation, branch, or code-path decision that causes it before filing.
 If you cannot pin it down, file the symptom as `inferred`, say the mechanism
 is unknown, and make the suggested fix a diagnostic step rather than a guessed
 patch.
@@ -129,7 +129,8 @@ Prioritize failures that are expensive, dangerous, or hard to detect.
   tiny negative), and code that keeps iterating on a NaN state or terminates
   early with a plausible-looking wrong answer
 - ill-conditioning, loss of precision, changed tolerances or defaults, changed
-  element types (Float32 vs Float64, integer vs float, real vs complex)
+  numeric types (single vs. double precision, integer vs. float, real vs.
+  complex)
 - silent wrong answers — worse than errors, because nothing flags them
 
 **Mutability, state, and caches:**
@@ -142,8 +143,8 @@ Prioritize failures that are expensive, dangerous, or hard to detect.
 - callbacks and hooks: changes to how many times or in what order they run,
   matters whenever they carry state, are non-idempotent, or change
   coefficients each call
-- type stability or inference changes that alter dispatch or results, not
-  only speed
+- changes to which implementation a call resolves to (overload, override,
+  or type-based selection) that alter results, not only speed
 
 **Systems failures:**
 
