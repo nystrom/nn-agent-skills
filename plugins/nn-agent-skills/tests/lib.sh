@@ -14,6 +14,9 @@ it() { CURRENT="$1"; }
 _ok()   { PASS=$((PASS+1)); printf '  ok   %s\n' "$1"; }
 _notok(){ FAIL=$((FAIL+1)); printf '  FAIL %s\n' "$1"; [[ -n "${2:-}" ]] && printf '       %s\n' "$2"; }
 
+# skip <description> <reason>   -- reported, but counts as neither pass nor fail
+skip()  { printf '  skip %s\n       %s\n' "$1" "$2"; }
+
 # expect <description> <actual> <expected>
 expect() {
   if [[ "$2" == "$3" ]]; then _ok "$1"; else _notok "$1" "expected '$3', got '$2'"; fi
