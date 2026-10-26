@@ -77,6 +77,15 @@ answer, broken invariants, and stale caches or factorizations. Proves findings
 with head-vs-base probes and reference computations. Approves immediately when
 a change touches no numerical code. Standalone or via the fan-out.
 
+### codex-code-review
+
+Second-model lens: runs the OpenAI Codex CLI's reviewer (`codex exec review`)
+over the same scope in a read-only sandbox and returns its findings in the lens
+format. Takes an optional Codex `model` and reasoning `effort`; without them,
+Codex uses the defaults in `~/.codex/config.toml`. Reports `not-run` instead of
+`approve` when the `codex` CLI is missing or the review fails, and skips itself
+when the host is Codex. Standalone or via the fan-out.
+
 ### interactive-code-review
 
 Walk a reviewer through a change set **one change at a time**, interactively —
@@ -163,6 +172,7 @@ codex plugin add nn-agent-skills@nn-agent-skills
 Invoke the skills as `$run-review-lenses`, `$adversarial-review`,
 `$performance-code-review`, `$risk-assessment`, `$test-coverage-code-review`,
 `$dead-code-code-review`, `$ai-slop-code-review`, `$numerical-code-review`,
+`$codex-code-review` (which skips itself inside Codex),
 `$interactive-code-review`,
 `$ui-code-review`, and `$evolve`, or describe a matching task and let Codex
 select the skill.
