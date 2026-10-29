@@ -1,12 +1,12 @@
 {
   "name": "nn-agent-skills",
 "version": "1.2.0",
-"description": "Review lenses (adversarial, performance, risk, test coverage, dead code, AI slop), run every installed lens for the findings alone, walk a change set one change at a time, or read the whole review as one HTML page, plus an LLM-driven evolutionary code optimizer.",
+"description": "Review lenses (adversarial, performance, risk, test coverage, dead code, AI slop), run every installed lens for the findings alone, walk a change set one change at a time, or read the whole review as one HTML page, plus an LLM-driven evolutionary code optimizer and concolic test generator.",
   "author": {
     "name": "nystrom"
   },
   "homepage": "https://github.com/nystrom/nn-agent-skills",
   "repository": "https://github.com/nystrom/nn-agent-skills",
   "license": "MIT",
-  "keywords": ["code-review", "github", "interactive", "refactoring", "evolution", "optimization", "worktree", "performance"]
+  "keywords": ["code-review", "github", "interactive", "refactoring", "evolution", "optimization", "worktree", "performance", "testing", "concolic", "coverage"]
 }

@@ -137,6 +137,15 @@ Claude Code and Antigravity receive the Evolve commands, agents, hooks, and scri
 Codex receives a native `$evolve` skill that runs the same scripts without
 depending on Claude's stop hook.
 
+### concolic-test-generation
+
+Generate high-coverage tests via LLM-driven concolic execution. It runs the test
+suite with branch coverage, identifies half-covered branches on the execution
+frontier, extracts the concrete seed input and path condition up to the
+divergence point, negates the target branch predicate, and uses LLM reasoning
+instead of an SMT solver to construct an input that flips the branch. Every
+candidate test is verified against coverage before it is kept.
+
 ## Install with Claude Code
 
 Add this marketplace, then install the plugin:
@@ -174,8 +183,8 @@ Invoke the skills as `$run-review-lenses`, `$adversarial-review`,
 `$dead-code-code-review`, `$ai-slop-code-review`, `$numerical-code-review`,
 `$codex-code-review` (which skips itself inside Codex),
 `$interactive-code-review`,
-`$ui-code-review`, and `$evolve`, or describe a matching task and let Codex
-select the skill.
+`$ui-code-review`, `$evolve`, and `$concolic-test-generation`, or describe a
+matching task and let Codex select the skill.
 
 ## Install with Antigravity
 
