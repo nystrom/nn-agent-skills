@@ -1,7 +1,7 @@
 # Review lens protocol — shared by every lens skill
 
 Every first-class review lens in this plugin (adversarial, performance, risk,
-test-coverage, dead-code, ai-slop, numerical, and any sibling that opts in) follows this
+test-coverage, dead-code, ai-slop, numerical, codex, and any sibling that opts in) follows this
 protocol.
 **Domain-specific attack surface, method, and finding bar live in that lens’s
 own `SKILL.md`.** This file is the shared machinery so standalone and fan-out
