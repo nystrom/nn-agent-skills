@@ -2,17 +2,33 @@
 
 ## 1. Per-Language Branch Coverage Commands
 
-Always request **branch coverage** and a machine-readable report (JSON or LCOV)
-so you can map line and branch IDs directly to source predicates. Scope execution
-to the target test file and target module to avoid full-suite overhead.
+Request **branch coverage** where supported and a machine-readable report (JSON
+or LCOV). When only line/statement counts are available, supplement them with
+source inspection and temporary predicate tracing to distinguish outcomes. Scope
+execution to the target test file and target module to avoid full-suite overhead.
 
 ### Python (`pytest` + `coverage.py`)
 
-```bash
-uv run coverage run --branch --context=test -m pytest path/to/test_target.py
-uv run coverage json -o .concolic-coverage.json --include="path/to/target.py"
+Enable dynamic test contexts in the project's existing coverage configuration
+(for `.coveragerc`, merge into `[run]`; for `pyproject.toml`, use
+`[tool.coverage.run]`):
+
+```ini
+[run]
+dynamic_context = test_function
 ```
 
+```bash
+uv run coverage run --branch -m pytest path/to/test_target.py
+uv run coverage json --show-contexts -o .concolic-coverage.json --include="path/to/target.py"
+```
+
+- `files[path].contexts` maps covered line numbers to test-function contexts.
+  `--context=test` alone is a single static label for the entire run, not a
+  per-test mapping. If pytest-cov already manages contexts, use its
+  `--cov-context=test` instead of also enabling `dynamic_context`.
+- Contexts identify candidate seed tests, not individual parameterized cases or
+  branch arcs. Run a selected test case in isolation to confirm its exact path.
 - `.concolic-coverage.json` contains `files[path].executed_lines`,
   `missing_lines`, `executed_branches` (`[[from_line, to_line], ...]`), and
   `missing_branches` (`[[from_line, to_line], ...]`).
@@ -124,8 +140,18 @@ go test -covermode=count -coverpkg=./path/to/pkg -coverprofile=.concolic-coverag
 
 - Each line in `.concolic-coverage.out` has format:
   `file:startLine.startCol,endLine.endCol numStmt count`.
-- Basic blocks with `count == 0` immediately following a conditional whose
-  enclosing or sibling block has `count > 0` form the branch frontier.
+- These are **statement/block counts**, not branch counts. Zero-count blocks
+  near reached conditionals identify candidate unexplored paths, but the profile
+  alone cannot establish a complete branch frontier.
+- Scan the source for predicates, including short-circuit `&&` and `||`, and
+  temporarily trace the outcomes actually evaluated by seed and candidate tests.
+  For example, `func Gate(a, b bool) bool { return a && b }` can report 100%
+  statement coverage with only `Gate(false, false)`, although the `a == true`
+  path and both outcomes of `b` remain unexplored. Trace these predicates without
+  evaluating operands that the original expression would skip, then remove the
+  instrumentation after measurement.
+- Verify flips using those traces; report statement coverage and traced outcomes
+  separately, with branch coverage marked unavailable unless explicitly measured.
 
 ### Julia (`--code-coverage`, `CoverageTools`, `LocalCoverage`)
 
@@ -136,8 +162,9 @@ go test -covermode=count -coverpkg=./path/to/pkg -coverprofile=.concolic-coverag
 - For programmatic LCOV / summary parsing, check whether `CoverageTools` or
   `Coverage` or `LocalCoverage` is installed in the global environment or
   `~/.julia/packages/` (`julia -e 'using Pkg; println(Base.find_package("CoverageTools"))'`).
-  If not installed, parse the plain-text `.cov` files directly or use Julia
-  1.10+'s built-in LCOV output `--code-coverage=@.concolic-lcov.info`.
+  If not installed, parse the plain-text `.cov` files directly or use Julia's
+  built-in LCOV output `--code-coverage=.concolic-lcov.info`. The `@`
+  prefix selects a source path filter rather than an output file.
 
 **Commands:**
 
@@ -209,10 +236,11 @@ A source line `if A && B && C:` has up to four branch outcomes:
 
 ### Loops (`while`, `for`, recursion)
 
+Use `D` for the desired outcome constraint (`P` for True, `¬P` for False).
 When the target branch `P` is inside a loop body:
 
 - **Iteration 0 vs. Iteration $k$**: if `T_seed` enters the loop and reaches `P`
-  on iteration 1 with accumulator `acc = f(x_0)`, check whether `¬P` can be
+  on iteration 1 with accumulator `acc = f(x_0)`, check whether `D` can be
   satisfied on iteration 1 by changing `x_0`, or whether `P` is a threshold
   condition (e.g. `steps >= max_steps` or `carry > 0`) that requires an input
   of length $k$ so the accumulator crosses the threshold on iteration $k$.
@@ -244,7 +272,7 @@ in stage order:
 ### Detecting Infeasible Paths (Unsatisfiable Constraints)
 
 Before synthesizing a test, check for structural contradiction between
-`C_1 ... C_{k-1}` and `¬P`:
+`C_1 ... C_{k-1}` and `D` (the desired outcome constraint):
 
 1. **Redundant guard**: an outer check `if x == nil { return }` dominates an
    inner check `if x == nil { ... }`. The inner true-branch is unsatisfiable.
@@ -252,10 +280,10 @@ Before synthesizing a test, check for structural contradiction between
    that clamps `0 <= p <= 1` cannot trigger a downstream `if p < 0` branch
    through the public API.
 3. **Mutually exclusive state flags**: `C_1` requires `mode == READ_ONLY` and
-   `¬P` requires `can_write == true`, where `can_write` is derived as
+   `D` requires `can_write == true`, where `can_write` is derived as
    `mode != READ_ONLY`.
 
 When a branch is infeasible along `T_seed`'s prefix, search the call graph or
 CFG for an **alternate entry path** to `location` that does not pass through the
 contradictory `C_i`. Only classify `location` as dead/infeasible when every
-path to `location` enforces `P`.
+path to `location` rules out `D`.

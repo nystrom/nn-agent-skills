@@ -142,7 +142,7 @@ depending on Claude's stop hook.
 Generate high-coverage tests via LLM-driven concolic execution. It runs the test
 suite with branch coverage, identifies half-covered branches on the execution
 frontier, extracts the concrete seed input and path condition up to the
-divergence point, negates the target branch predicate, and uses LLM reasoning
+divergence point, negates the seed's branch outcome, and uses LLM reasoning
 instead of an SMT solver to construct an input that flips the branch. Every
 candidate test is verified against coverage before it is kept.
 

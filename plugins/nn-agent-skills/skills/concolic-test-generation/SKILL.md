@@ -5,7 +5,7 @@ description: >-
   coverage + symbolic path negation). Runs the test suite with branch and line
   coverage, builds a branch frontier where one outcome is covered and its flip
   is not, extracts the concrete seed input and path condition up to the
-  divergence point, negates the target branch predicate, and solves the
+  divergence point, negates the seed's target-branch outcome, and solves the
   negated path condition with LLM reasoning instead of an SMT solver. Verifies
   each synthesized test by re-running coverage and keeps only tests that flip
   the target branch without failing or duplicating existing paths. Use when
@@ -20,13 +20,14 @@ execution** (test runner + branch/line coverage + trace inspection) with
 **LLM-driven symbolic path negation**. Instead of translating constraints to
 SMT-LIB and calling Z3, you act as the constraint solver: read the concrete seed
 input that reaches the parent of an uncovered branch, collect the path
-condition along that trace, negate the branch predicate at the divergence
+condition along that trace, negate the seed's branch outcome at the divergence
 point, and construct a new input that satisfies the prefix constraints while
 flipping the target branch.
 
-Every generated test is **verified against the coverage tool**. A test that
-does not flip its target branch (or uncover a new path) is discarded or retried
-once; never keep a test for coverage theater.
+Every generated test is **verified against the coverage tool**, supplemented
+by temporary predicate tracing when the report cannot distinguish outcomes. A
+test that does not flip its target branch (or uncover a new path) is discarded
+or retried once; never keep a test for coverage theater.
 
 Read `references/coverage-and-constraints.md` for per-language coverage commands
 (branch + per-test context where supported) and constraint-solving patterns
@@ -91,9 +92,12 @@ Coverage tool lookup and invocation by language (details and JSON/LCOV schemas i
     sub-line short-circuit arms. To inspect short-circuit `&&` / `||` or ternary
     outcomes on a single line, inspect the AST or temporarily split arms onto
     separate lines during trace inspection.
-- **Python**: `coverage.py` (`uv run coverage run --branch --context=test -m pytest ...`
-  and `uv run coverage json`).
-- **Go**: built-in `go test -covermode=count -coverprofile=.concolic-coverage.out`.
+- **Python**: `coverage.py` with dynamic test contexts (`dynamic_context = test_function`
+  under `[run]` in `.coveragerc`), `uv run coverage run --branch -m pytest ...`,
+  and `uv run coverage json --show-contexts`.
+- **Go**: built-in `go test -covermode=count -coverprofile=.concolic-coverage.out`
+  measures statements, not branch outcomes. Supplement it with source inspection
+  and temporary predicate tracing, especially for `&&` and `||`.
 
 Check machine load before running the suite. Run coverage scoped to the target
 module and its existing tests, not the entire monorepo suite.
@@ -111,6 +115,9 @@ LCOV, Cobertura XML, or annotated source report):
    predicates `P` at `file:line` where execution reached `P` at least once,
    took one outcome (`True` or `False`, or a subset of `match`/`switch` arms),
    and never took the alternative outcome.
+   - When reports lack branch outcomes (e.g. Go statement coverage), inspect
+     source predicates and trace their evaluated outcomes for seeds and candidates.
+     A fully covered line or block does not prove both outcomes were taken.
    - If the target function has **zero** coverage (no seed reaches the entry
      point), first synthesize one baseline seed input that enters the function,
      run it under coverage, and rebuild the frontier.
@@ -134,22 +141,26 @@ For the top unexplored branch `(location, predicate P, taken_outcome, desired_ou
      returns) that `T_seed` supplies.
    - Follow the control flow through the source code (or attach a lightweight
      trace/log probe if arithmetic or loop state is opaque) and list every
-     branch condition `C_1, C_2, ..., C_{k-1}` evaluated along the path before
-     `P`.
+     branch predicate evaluated along the path before `P`, including its outcome.
+     Define each prefix literal `C_i` as that predicate for a True outcome or
+     its negation for a False outcome, so every `C_i(I_seed)` is True.
 3. **Write down the explicit Path Condition**:
    - Prefix constraints: `C_1(I) ∧ C_2(I) ∧ ... ∧ C_{k-1}(I)` (must remain
      **unchanged** so execution still reaches `location`).
-   - Negated target constraint: `¬P(I)` (or the specific arm condition for a
-     multi-way branch).
+   - Target constraint `D(I)`: use `P(I)` when `desired_outcome` is True and
+     `¬P(I)` when it is False. For a multi-way branch, use the condition for
+     the specific missing arm. This negates the seed's signed target literal.
+     For example, `P: x > 0` with seed `x = 0` requires `D: x > 0`; seed
+     `x = 1` requires `D: x <= 0`.
    - Trace symbolic expressions back to the entry parameters `I`: if `P` checks
-     a local variable `y > 10` where `y = normalize(x) + offset`, express `¬P`
+     a local variable `y > 10` where `y = normalize(x) + offset`, express `D`
      in terms of the input `x` and state `offset`.
 
 ### 4. Solve the negated path condition (LLM instead of SMT)
 
 Construct a concrete input `I_new` that satisfies:
 
-$$\text{Prefix}(I_{\text{new}}) \;\land\; \neg P(I_{\text{new}})$$
+$$\text{Prefix}(I_{\text{new}}) \;\land\; D(I_{\text{new}})$$
 
 Apply minimal perturbation to `I_seed`:
 
@@ -160,7 +171,7 @@ Apply minimal perturbation to `I_seed`:
     equation directly; pick the boundary value (e.g. `x == limit` or
     `x == limit - 1`).
   - **Strings / regex / parsers**: construct a string that passes earlier stage
-    checks (`C_1 ... C_{k-1}`) and triggers `¬P` (e.g. valid header prefix,
+    checks (`C_1 ... C_{k-1}`) and satisfies `D` (e.g. valid header prefix,
     malformed payload at offset `k`).
   - **Collections / graphs / trees**: adjust length, duplicate keys, ordering,
     or depth to satisfy structural predicates.
@@ -168,11 +179,11 @@ Apply minimal perturbation to `I_seed`:
     or DB error return, inject or stub only that boundary return value while
     keeping the production logic under test unmocked.
 - **Check for unsatisfiability (infeasible path)**: if `C_1 ∧ ... ∧ C_{k-1}`
-  logically implies `P` (for example, `C_1` established `x > 5` and `x` is
-  not mutated before `P` checks `x >= 0`), the negated branch `¬P` is **dead
-  code** along this path. Check whether another entry path reaches `location`
+  logically implies `¬D`, the desired outcome is **infeasible along this path**.
+  For example, a prefix establishing `x > 5` contradicts a desired `x < 0`
+  when `x` has not been mutated. Check whether another entry path reaches `location`
   without `C_1`; if none exists, mark the branch **infeasible** and record the
-  contradiction (`C_i` vs `¬P`) instead of guessing inputs.
+  contradiction (`C_i` vs `D`) instead of guessing inputs.
 
 ### 5. Synthesize the test and determine the oracle
 
@@ -184,14 +195,15 @@ used):
   without checking the contract. Derive the expected return value, state
   mutation, or raised exception from the function's specification, types,
   docstring, and callers.
-- **Bug discovery**: if executing `I_new` along `¬P` triggers an unhandled
+- **Bug discovery**: if executing `I_new` satisfying `D` triggers an unhandled
   exception, panic, data corruption, or contract violation that the caller does
   not expect, **flag it as a bug** found by concolic exploration rather than
   enshrining the broken behavior in a passing assertion.
 
 ### 6. Execute, measure coverage delta, and refine
 
-Run the test runner with branch coverage on the new test:
+Run the test runner with branch coverage on the new test, or verify the desired
+outcome with temporary predicate tracing when branch coverage is unavailable:
 
 1. **Target branch flipped (`desired_outcome` is now covered)**:
    - Keep the test.
@@ -216,11 +228,13 @@ Run the test runner with branch coverage on the new test:
 Report a concise summary at the end of the run:
 
 1. **Coverage delta**: line and branch coverage on the target before vs. after.
+   Report branch coverage as unavailable when only line/statement coverage was
+   measured; list traced outcomes separately.
 2. **Resolved branches**: table or list of `(file:line, branch predicate,
    negated path condition, test name, input summary)`.
 3. **Bugs uncovered** (if any): `file:line`, triggering input `I_new`, path
    condition, failure mode, and fix recommendation.
 4. **Infeasible / dead branches**: `file:line`, the contradictory predicates
-   (`C_i` vs `¬P`), and whether the dead branch can be simplified or removed.
+   (`C_i` vs `D`), and whether the dead branch can be simplified or removed.
 5. **Unresolved branches** (if budget exhausted or complex external state
    blocked inversion): `file:line` and what blocked satisfaction.
