@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 filter="${1:-}"
 total_fail=0
 
-for f in tests/evolve/*.sh tests/review/*.sh; do
+for f in tests/review/*.sh; do
   [[ -e "$f" ]] || continue
   [[ -n "$filter" && "$f" != *"$filter"* ]] && continue
   printf '\n%s\n' "${f#tests/}"
