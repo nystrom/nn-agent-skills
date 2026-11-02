@@ -126,25 +126,16 @@ with click-to-jump line anchors.
 It is a report: it asks nothing, posts nothing, and edits nothing. The output
 file needs no server and fetches nothing.
 
-### evolve
-
-An LLM-driven evolutionary code optimizer inspired by AlphaEvolve. It runs
-candidate mutations in isolated git worktrees, evaluates them with a
-user-defined fitness function, and retains the strongest result across
-iterations.
-
-Claude Code and Antigravity receive the Evolve commands, agents, hooks, and scripts.
-Codex receives a native `$evolve` skill that runs the same scripts without
-depending on Claude's stop hook.
-
 ### concolic-test-generation
 
-Generate high-coverage tests via LLM-driven concolic execution. It runs the test
-suite with branch coverage, identifies half-covered branches on the execution
-frontier, extracts the concrete seed input and path condition up to the
-divergence point, negates the seed's branch outcome, and uses LLM reasoning
-instead of an SMT solver to construct an input that flips the branch. Every
-candidate test is verified against coverage before it is kept.
+Generates tests that drive a module down execution paths its suite never takes.
+It records the ordered branch decisions each existing test makes, targets every
+path that shares a prefix with a known path and then flips one decision, and
+uses the model in place of an SMT solver to find inputs for that path. A test is
+kept only if its recorded path starts with the target prefix. Generated tests
+are characterization tests, written to a separate `*.generated` test file; an
+optional review pass on a stronger model judges whether each pinned behavior is
+correct.
 
 ## Install with Claude Code
 
@@ -166,10 +157,7 @@ Once installed, there are three ways into a review. Ask for the findings alone
 ("review this and just tell me what's wrong") to get `run-review-lenses`. Ask to
 walk through the changes one by one, "grill me on this diff", or "review my local
 changes and fix them" for the interactive session. Ask for a web page or a review
-report to get the HTML page. Invoke Evolve with `/nn-agent-skills:evolve` and the
-target plus fitness criteria; see
-[`plugins/nn-agent-skills/skills/evolve/README.md`](plugins/nn-agent-skills/skills/evolve/README.md)
-for examples and requirements.
+report to get the HTML page.
 
 ## Install with Codex
 
@@ -183,8 +171,8 @@ Invoke the skills as `$run-review-lenses`, `$adversarial-review`,
 `$dead-code-code-review`, `$ai-slop-code-review`, `$numerical-code-review`,
 `$codex-code-review` (which skips itself inside Codex),
 `$interactive-code-review`,
-`$ui-code-review`, `$evolve`, and `$concolic-test-generation`, or describe a
-matching task and let Codex select the skill.
+`$ui-code-review`, `$concolic-test-generation`, or describe a matching task
+and let Codex select the skill.
 
 ## Install with Antigravity
 

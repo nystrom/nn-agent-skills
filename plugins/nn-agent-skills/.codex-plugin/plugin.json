@@ -1,7 +1,7 @@
 {
   "name": "nn-agent-skills",
-"version": "1.2.0",
-"description": "Review lenses (adversarial, performance, risk, test coverage, dead code, AI slop), run every installed lens for the findings alone, walk the changes one at a time, or render the whole review as one HTML page, plus evolutionary code optimization against a fitness function.",
+  "version": "1.3.0",
+  "description": "Review lenses (adversarial, performance, risk, test coverage, dead code, AI slop, numerical, Codex), run every installed lens for the findings alone, walk the changes one at a time, or render the whole review as one HTML page, plus a concolic test generator that targets unexplored execution paths.",
   "author": {
     "name": "nystrom",
     "url": "https://github.com/nystrom"
@@ -9,28 +9,40 @@
   "homepage": "https://github.com/nystrom/nn-agent-skills",
   "repository": "https://github.com/nystrom/nn-agent-skills",
   "license": "MIT",
-  "keywords": ["code-review", "github", "interactive", "refactoring", "evolution", "optimization", "benchmarking", "performance"],
+  "keywords": [
+    "code-review",
+    "github",
+    "interactive",
+    "refactoring",
+    "performance",
+    "testing",
+    "concolic"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Agent Skills",
-"shortDescription": "Adversarial, performance, risk, test-coverage, dead-code, and AI-slop review lenses; walkthroughs and HTML reports; evolutionary optimization.",
-    "longDescription": "Ships adversarial-review, performance-code-review, risk-assessment, test-coverage-code-review, dead-code-code-review, ai-slop-code-review, numerical-code-review, and codex-code-review lenses, and runs every code-review lens installed in the environment over a branch or working-tree diff for merged findings. Walk a branch or working-tree diff one logical change at a time in the terminal, drafting GitHub comments or applying verified fixes — or render the whole review as one self-contained HTML page with an overview, a GitHub-style diff, and per-change findings. Also generates diverse code mutations, evaluates them in isolated worktrees, and retains the strongest verified candidates in a MAP-Elites archive.",
+    "shortDescription": "Adversarial, performance, risk, test-coverage, dead-code, AI-slop, numerical, and Codex review lenses; walkthroughs and HTML reports; concolic test generation.",
+    "longDescription": "Ships adversarial-review, performance-code-review, risk-assessment, test-coverage-code-review, dead-code-code-review, ai-slop-code-review, numerical-code-review, and codex-code-review lenses, and runs every code-review lens installed in the environment over a branch or working-tree diff for merged findings. Walk a branch or working-tree diff one logical change at a time in the terminal, drafting GitHub comments or applying verified fixes \u2014 or render the whole review as one self-contained HTML page with an overview, a GitHub-style diff, and per-change findings. Also ships concolic-test-generation, which records each test's ordered branch decisions and writes characterization tests for paths one flipped decision away from a known path.",
     "developerName": "nystrom",
     "category": "Developer Tools",
-    "capabilities": ["Interactive", "Read", "Write"],
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
     "websiteURL": "https://github.com/nystrom/nn-agent-skills",
-"defaultPrompt": [
+    "defaultPrompt": [
       "Review this branch and just tell me what the problems are.",
       "Run an adversarial review of this PR.",
-"Performance-review this branch.",
+      "Performance-review this branch.",
       "Assess the shipping risk of this change.",
-"Is this PR tested enough? Review test coverage.",
-"Find dead code in this branch and propose removals.",
+      "Is this PR tested enough? Review test coverage.",
+      "Find dead code in this branch and propose removals.",
       "Ruthlessly strip AI slop from this diff.",
       "Review this branch interactively, one change at a time.",
       "Review this branch and give me the review as a web page.",
       "Review my local changes and fix the problems.",
-      "Optimize this function against a benchmark with Evolve."
+      "Generate tests for the execution paths this module's suite never takes."
     ]
   }
 }
