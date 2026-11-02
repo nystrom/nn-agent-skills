@@ -13,6 +13,13 @@ for f in tests/review/*.sh; do
   bash "$f" || total_fail=$((total_fail+1))
 done
 
+for d in skills/*/scripts; do
+  compgen -G "$d/*.test.mjs" >/dev/null || continue
+  [[ -n "$filter" && "$d" != *"$filter"* ]] && continue
+  printf '\n%s\n' "$d"
+  node --test "$d"/*.test.mjs || total_fail=$((total_fail+1))
+done
+
 printf '\n'
 if [[ "$total_fail" -eq 0 ]]; then
   printf 'all suites passed\n'; exit 0

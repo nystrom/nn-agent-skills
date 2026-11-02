@@ -1,240 +1,283 @@
 ---
 name: concolic-test-generation
 description: >-
-  Generate high-coverage tests using LLM-driven concolic execution (concrete
-  coverage + symbolic path negation). Runs the test suite with branch and line
-  coverage, builds a branch frontier where one outcome is covered and its flip
-  is not, extracts the concrete seed input and path condition up to the
-  divergence point, negates the seed's target-branch outcome, and solves the
-  negated path condition with LLM reasoning instead of an SMT solver. Verifies
-  each synthesized test by re-running coverage and keeps only tests that flip
-  the target branch without failing or duplicating existing paths. Use when
-  asked for concolic test generation, coverage-guided test synthesis, branch
-  inversion testing, or closing uncovered execution paths with tests.
+  Generate tests for execution paths a module's test suite never takes, by
+  LLM-driven concolic search. Records the ordered branch decisions each
+  existing test makes (one path per test), targets every path that keeps a
+  known path's first k-1 decisions and flips the k-th, picks the test sharing
+  the longest prefix as the seed, and uses LLM reasoning in place of an SMT
+  solver to build an input for that path. A candidate is kept only if it
+  passes, adds exactly one test, and its recorded path starts with the target
+  prefix. Writes characterization tests to a separate generated test file; an
+  optional review pass on a stronger model judges whether each pinned behavior
+  is correct. Use when asked for concolic test generation, path-coverage test
+  synthesis, or tests for unexplored execution paths.
 ---
 
 # Concolic Test Generation
 
-Generate tests that reach unexecuted program paths by combining **concrete
-execution** (test runner + branch/line coverage + trace inspection) with
-**LLM-driven symbolic path negation**. Instead of translating constraints to
-SMT-LIB and calling Z3, you act as the constraint solver: read the concrete seed
-input that reaches the parent of an uncovered branch, collect the path
-condition along that trace, negate the seed's branch outcome at the divergence
-point, and construct a new input that satisfies the prefix constraints while
-flipping the target branch.
+A concolic engine records the path condition of a concrete run, negates one
+conjunct, and asks a solver for inputs that satisfy the result. This skill does
+the same search with you in place of the solver.
 
-Every generated test is **verified against the coverage tool**, supplemented
-by temporary predicate tracing when the report cannot distinguish outcomes. A
-test that does not flip its target branch (or uncover a new path) is discarded
-or retried once; never keep a test for coverage theater.
+Read `references/coverage-and-constraints.md` for how to record paths per
+language and for constraint-solving patterns. The search, the bounds, and the
+ledger are implemented in this skill's `scripts/` directory (run
+`node <skill-dir>/scripts/concolic.mjs` from the target repository's root; with
+no arguments it prints usage). Do not compute the frontier by hand. The examples
+below write `scripts/` for `<skill-dir>/scripts/`.
 
-Read `references/coverage-and-constraints.md` for per-language coverage commands
-(branch + per-test context where supported) and constraint-solving patterns
-across data types, state, and external boundaries.
+## What a path is
+
+A path is the ordered sequence of branch decisions one test makes through one
+module. A decision is `(branchId, arm)`: which branch, and which way it went.
+
+Branch coverage cannot express this. Coverage counters are aggregates: a suite
+that takes an `if` true in one test and false in another reports both arms
+covered, but says nothing about which combinations occur in one run. Two tests
+can cover every arm of a function with three sequential two-way branches and
+still miss six of its eight paths. When every arm is covered, a branch frontier
+is empty; a path frontier is not.
 
 ## Inputs
 
-- **Target**: files, functions, packages, or diff (`origin/main...HEAD` by
-  default when no target is named and the branch has changes; otherwise ask or
-  use the user-specified files).
-- **Budget**: max iterations or target branches to attempt (default: `10`
-  branches or until all reachable branches in target are covered or classified
-  infeasible).
-- **Mode**: `write` (default: add verified tests to the project's test suite)
-  or `report` (emit candidate inputs, path conditions, and infeasible-branch
-  findings without modifying tracked test files).
+- **Target**: one module (source file). For a diff or a package, run once per
+  changed module.
+- **Mode**:
+  - `generate` (default): add accepted tests to the module's generated test
+    file. Never edit hand-written test files or the source under test.
+  - `review`: run the oracle pass over an existing generated file.
+  - `report`: print the frontier and stop. Writes nothing.
+- **Bounds**: `max-depth` (default 12), `max-visits` (default 2), `max-tests`
+  accepted tests per run (default 10), `retries` repair attempts per target
+  (default 2). See "Bounds".
 
-## Concolic Loop
+## The search
 
-### 1. Discover test runner and coverage instrumentation
+### 1. Record a baseline path per test
 
-Inspect the repository (`pyproject.toml`, `package.json`, `Cargo.toml`,
-`go.mod`, `Project.toml`, `Makefile`, CI workflows) to identify the test runner
-and coverage tool. Always enable **branch coverage** when the ecosystem supports
-it; line coverage misses short-circuiting boolean expressions (`a && b`),
-ternary operators, and implicit `else` paths.
+Find the test runner and how to record ordered decisions for the language
+(`references/coverage-and-constraints.md`, section 1). Check machine load first,
+and run only the test files that exercise the target module.
 
-Coverage tool lookup and invocation by language (details and JSON/LCOV schemas in
-`references/coverage-and-constraints.md`):
+Produce two artifacts:
 
-- **TypeScript / JavaScript**: check `package.json` (`devDependencies` and
-  `scripts`), `vitest.config.*`, `jest.config.*`, or `.nycrc*`.
-  - **Vitest**: requires `@vitest/coverage-v8` or `@vitest/coverage-istanbul` in
-    `node_modules/@vitest/`. Run with `--coverage.enabled=true --coverage.reporter=json`
-    (writes `coverage/coverage-final.json`).
-  - **Jest**: built-in `--coverage --coverageReporters=json` (uses `babel` or
-    `v8` via `coverageProvider`; writes `coverage/coverage-final.json`).
-  - **Node.js test runner / Mocha / tape**: use `c8` (`npx c8 --reporter=json`)
-    or `nyc` (`npx nyc --reporter=json`), or Node's built-in V8 coverage
-    directory (`NODE_V8_COVERAGE=.concolic-v8 node --test ...`).
-- **Rust**: check `Cargo.toml` and `rust-toolchain.toml`, then locate the
-  installed binary in `~/.cargo/bin` or `PATH`:
-  - **`cargo-llvm-cov`** (`cargo llvm-cov --version`; install via
-    `cargo install cargo-llvm-cov` + `rustup component add llvm-tools-preview`):
-    preferred. Exports region/branch JSON via
-    `cargo llvm-cov --test <target> --json --output-path .concolic-coverage.json`
-    (add `--branch` on nightly with `-Z coverage-options=branch`).
-  - **`cargo-tarpaulin`** (`cargo tarpaulin --version`, Linux/macOS): fallback if
-    `cargo-llvm-cov` is absent (`cargo tarpaulin --out Json`).
-  - **Raw `rustc` instrumentation** (when no wrapper is installed): run with
-    `RUSTFLAGS="-C instrument-coverage" LLVM_PROFILE_FILE=".concolic-%p-%m.profraw" cargo test`,
-    then merge and export with `llvm-profdata` and `llvm-cov` located inside
-    `$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/host: //p')/bin/`.
-- **Julia**: built into the `julia` binary (`--code-coverage=user` or
-  `--code-coverage=tracefile-%p.info`), plus standard library `CoverageTools`
-  (ships in the `CoverageTools` / `Coverage` package or stdlib depot under
-  `~/.julia/packages/CoverageTools`):
-  - Run `julia --project=. --code-coverage=user -e 'include("test/runtests.jl")'`
-    to emit `.cov` files alongside each `.jl` source file, or parse them into
-    LCOV with `using CoverageTools; LCOV.writefile(".concolic-lcov.info", process_folder("src"))`.
-  - Note: Julia's `--code-coverage` records per-line execution counts, not
-    sub-line short-circuit arms. To inspect short-circuit `&&` / `||` or ternary
-    outcomes on a single line, inspect the AST or temporarily split arms onto
-    separate lines during trace inspection.
-- **Python**: `coverage.py` with dynamic test contexts (`dynamic_context = test_function`
-  under `[run]` in `.coveragerc`), `uv run coverage run --branch -m pytest ...`,
-  and `uv run coverage json --show-contexts`.
-- **Go**: built-in `go test -covermode=count -coverprofile=.concolic-coverage.out`
-  measures statements, not branch outcomes. Supplement it with source inspection
-  and temporary predicate tracing, especially for `&&` and `||`.
+- A branch map: `{branchId: {type, loc: {start: {line}}, locations: [...]}}`,
+  one entry per branch, one `locations` element per arm. Istanbul's
+  `coverage-final.json` entry already has this shape.
+- A trace directory of `*.jsonl` files, one line per test:
+  `{"testPath", "testName", "decisions": [[branchId, arm], ...]}`.
 
-Check machine load before running the suite. Run coverage scoped to the target
-module and its existing tests, not the entire monorepo suite.
+Stop if the baseline records no paths although tests ran. The tracer is then
+broken or misconfigured, and every candidate would be rejected for having no
+path. `concolic.mjs frontier` exits with status 2 in that case.
 
-### 2. Baseline concrete execution and branch frontier
+If no test reaches the module at all, report that there is no seed and stop.
 
-Run the existing tests under coverage and parse the structured output (JSON,
-LCOV, Cobertura XML, or annotated source report):
+### 2. Compute the frontier
 
-1. **Seed corpus**: map each existing test case to the lines and branches it
-   executes. When the coverage tool supports per-test contexts (e.g.
-   `pytest --cov-context=test`), enable it; otherwise map tests by targeting
-   the test file for the module under test.
-2. **Branch frontier**: find **half-covered branches**, which are conditional
-   predicates `P` at `file:line` where execution reached `P` at least once,
-   took one outcome (`True` or `False`, or a subset of `match`/`switch` arms),
-   and never took the alternative outcome.
-   - When reports lack branch outcomes (e.g. Go statement coverage), inspect
-     source predicates and trace their evaluated outcomes for seeds and candidates.
-     A fully covered line or block does not prove both outcomes were taken.
-   - If the target function has **zero** coverage (no seed reaches the entry
-     point), first synthesize one baseline seed input that enters the function,
-     run it under coverage, and rebuild the frontier.
-3. **Rank the frontier**: prioritize branches by:
-   - Shallowest control-dependency depth from an already-covered path (closest
-     divergence point first).
-   - High-consequence paths: error handling, boundary guards, parser/validator
-     rejections, state transitions, and security/permission checks.
-   - Skip generated code, unreachable defensive assertions mandated by the type
-     system, and platform-specific branches for other OSes.
+```bash
+node scripts/concolic.mjs frontier --source src/target.ts \
+  --branches .concolic/coverage/coverage-final.json --traces .concolic/traces \
+  --max-depth 12 --max-visits 2
+```
 
-### 3. Select a target branch and extract the path condition
+For each known path `T` and each index `k`, the target prefix is
+`T[0..k-1] ++ flip(T[k])`: a path that shares a feasible prefix with `T` and
+then goes where no test has gone. For a branch with more than two arms, each
+other arm is a separate flip. The script drops prefixes that a known path
+already realizes, and prefixes the ledger retired for the current source hash.
+It orders the rest shortest first, and names a seed for each: the known test
+whose path shares the longest prefix with the target, ties going to the shorter
+path.
 
-For the top unexplored branch `(location, predicate P, taken_outcome, desired_outcome = ¬taken_outcome)`:
+Shortest first spreads exploration across many branches before going deep
+along one path. Each step costs a model call, not a solver query.
 
-1. **Identify a concrete seed test `T_seed`** that reaches `location` and
-   evaluates `P` to `taken_outcome`.
-2. **Trace the concrete execution** of `T_seed` from the entry point to
-   `location`:
-   - Read the concrete input values `I_seed` (arguments, fixture state, mocked
-     returns) that `T_seed` supplies.
-   - Follow the control flow through the source code (or attach a lightweight
-     trace/log probe if arithmetic or loop state is opaque) and list every
-     branch predicate evaluated along the path before `P`, including its outcome.
-     Define each prefix literal `C_i` as that predicate for a True outcome or
-     its negation for a False outcome, so every `C_i(I_seed)` is True.
-3. **Write down the explicit Path Condition**:
-   - Prefix constraints: `C_1(I) ∧ C_2(I) ∧ ... ∧ C_{k-1}(I)` (must remain
-     **unchanged** so execution still reaches `location`).
-   - Target constraint `D(I)`: use `P(I)` when `desired_outcome` is True and
-     `¬P(I)` when it is False. For a multi-way branch, use the condition for
-     the specific missing arm. This negates the seed's signed target literal.
-     For example, `P: x > 0` with seed `x = 0` requires `D: x > 0`; seed
-     `x = 1` requires `D: x <= 0`.
-   - Trace symbolic expressions back to the entry parameters `I`: if `P` checks
-     a local variable `y > 10` where `y = normalize(x) + offset`, express `D`
-     in terms of the input `x` and state `offset`.
+In `report` mode, print the frontier with each target's decisions rendered as
+source predicates, and stop.
 
-### 4. Solve the negated path condition (LLM instead of SMT)
+### 3. Write the path condition for the target
 
-Construct a concrete input `I_new` that satisfies:
+Take the first target. Read the seed test and its concrete inputs `I_seed`.
+Map each decision in the target prefix to its predicate at `branchMap[id].loc`:
+`C_1 ... C_{k-1}` for the shared prefix (each true under `I_seed`), and `D` for
+the flipped arm. Express each in terms of the test's inputs: if `D` checks a
+local `y > 10` where `y = normalize(x) + offset`, write it in terms of `x` and
+`offset`.
 
-$$\text{Prefix}(I_{\text{new}}) \;\land\; D(I_{\text{new}})$$
+The path condition is `C_1 ∧ ... ∧ C_{k-1} ∧ D`. Decisions after `k` are free.
 
-Apply minimal perturbation to `I_seed`:
+### 4. Solve it
 
-- Keep every field, argument, or fixture setup of `I_seed` that does not
-  participate in `P` fixed, so `C_1 ... C_{k-1}` stay satisfied.
-- Solve for the minimal change to `I_seed` that flips `P`:
-  - **Numeric / arithmetic / bitwise**: solve the inequality or modular
-    equation directly; pick the boundary value (e.g. `x == limit` or
-    `x == limit - 1`).
-  - **Strings / regex / parsers**: construct a string that passes earlier stage
-    checks (`C_1 ... C_{k-1}`) and satisfies `D` (e.g. valid header prefix,
-    malformed payload at offset `k`).
-  - **Collections / graphs / trees**: adjust length, duplicate keys, ordering,
-    or depth to satisfy structural predicates.
-  - **External calls / I/O seams**: when `P` depends on a clock, RNG, network,
-    or DB error return, inject or stub only that boundary return value while
-    keeping the production logic under test unmocked.
-- **Check for unsatisfiability (infeasible path)**: if `C_1 ∧ ... ∧ C_{k-1}`
-  logically implies `¬D`, the desired outcome is **infeasible along this path**.
-  For example, a prefix establishing `x > 5` contradicts a desired `x < 0`
-  when `x` has not been mutated. Check whether another entry path reaches `location`
-  without `C_1`; if none exists, mark the branch **infeasible** and record the
-  contradiction (`C_i` vs `D`) instead of guessing inputs.
+Construct `I_new` satisfying the path condition by the smallest change to
+`I_seed` (patterns in the reference, section 2):
 
-### 5. Synthesize the test and determine the oracle
+- Keep every input that no `C_i` or `D` depends on.
+- Numeric: solve the inequality; pick the boundary value.
+- Strings and parsers: keep the prefix that passes earlier stages, change the
+  slice `D` inspects.
+- Collections: change length, order, duplicates, or depth.
+- External boundaries (clock, RNG, network, DB): stub only that boundary's
+  return value. Do not mock the code under test.
 
-Write a focused test case using `I_new` that matches the repository's existing
-test conventions (file placement, naming, fixtures, table-driven style where
-used):
+Before writing a test, check whether the target is reachable:
 
-- **Oracle (assertion)**: do **not** assert whatever the code happens to return
-  without checking the contract. Derive the expected return value, state
-  mutation, or raised exception from the function's specification, types,
-  docstring, and callers.
-- **Bug discovery**: if executing `I_new` satisfying `D` triggers an unhandled
-  exception, panic, data corruption, or contract violation that the caller does
-  not expect, **flag it as a bug** found by concolic exploration rather than
-  enshrining the broken behavior in a passing assertion.
+- **Infeasible**: the prefix implies `¬D` (an outer guard dominates the inner
+  check, a smart constructor clamps the value, two flags are derived from one
+  field). Record the contradicting `C_i` and `D`.
+- **Unreachable through the public API**: the path turns on a value only a
+  module-private binding can produce, such as a brand made by an unexported
+  constructor. A test cannot reach it without coupling to internals.
 
-### 6. Execute, measure coverage delta, and refine
+Never export internals, add test-only hooks, or write in-source tests to reach a
+path. Report it as unreachable and move on. Retire either kind in the ledger:
 
-Run the test runner with branch coverage on the new test, or verify the desired
-outcome with temporary predicate tracing when branch coverage is unavailable:
+```bash
+node scripts/concolic.mjs retire --source src/target.ts --key '<target key>' \
+  --status infeasible --reason 'C_2 (n > 0) contradicts D (n < 0)'
+```
 
-1. **Target branch flipped (`desired_outcome` is now covered)**:
-   - Keep the test.
-   - Update the coverage map and the branch frontier: flipping `P` often exposes
-     nested branches inside the newly entered block; add those to the frontier.
-2. **Target branch NOT flipped (execution diverged earlier at `C_j` or still
-   took `taken_outcome`)**:
-   - Inspect which lines/branches actually executed for `I_new`.
-   - Identify the exact predicate where concrete execution disagreed with the
-     predicted path condition (either `C_j` flipped unintentionally, or an
-     intermediate transformation changed the value before `P`).
-   - **Retry once** with the refined constraint (adding the missed intermediate
-     transformation or tightening `C_j`). If the second attempt still fails to
-     flip `P`, revert the candidate test, mark the branch `unresolved`, and
-     move to the next frontier item.
-3. **Prune redundant tests**: if a later test covers a strict superset of an
-   earlier generated test's branches and locks the same behavioral contract,
-   merge or prune the weaker test so the suite stays minimal.
+### 5. Write the candidate
+
+Write exactly one test that drives `I_new` through the module, following the
+repository's test conventions. The assertion pins what the code does now: this
+is a characterization test, not a judgment that the behavior is right.
+
+To keep the recorded path equal to the intended one:
+
+- Reach the module through the same entry point the seed uses, unless the path
+  requires another.
+- Call the module once. A second call appends its own decisions and usually
+  breaks the prefix.
+- Setup that calls the module under test also records decisions. Build fixtures
+  by hand rather than through helpers that run the module.
+
+Assert on observable results: a return value, a thrown error's message, a
+state change. If the only assertion available is "does not throw", say so in the
+report rather than padding the test.
+
+If running `I_new` crashes or violates an obvious contract, keep the test
+pinning the current behavior and note the suspicion for the review pass. Do not
+assert the behavior you think is intended; that is the review pass's call.
+
+### 6. Gate the candidate
+
+Before running it, check structure. Reject a candidate that:
+
+- has more or less than one test case, or wraps it in a `describe` group;
+- uses a snapshot assertion;
+- imports anything other than the module's public API, the test framework, and
+  helpers the seed test already uses.
+
+Then add it to the generated file (see "Output files"), run that file with the
+tracer, and accept only if all three hold:
+
+1. the new test passes;
+2. the file runs exactly one more test than before (one test per candidate; the
+   trace for the new test must be its own);
+3. its recorded path starts with the target prefix:
+
+   ```bash
+   node scripts/concolic.mjs check --traces .concolic/traces \
+     --test-name '<full test name>' --prefix '<target prefix JSON>'
+   ```
+
+A test that reaches the flipped arm by a different route fails check 3: it
+covers the arm but not the target path.
+
+On rejection, remove the candidate and retry up to `retries` times, each time
+with the rejection reason in hand: the failing assertion, the test-count
+mismatch, or the decision where the recorded path diverged (`check` prints it).
+After the last retry, retire the target as `gaveup` with the last reason.
+
+### 7. Repeat
+
+Re-run the generated file with the tracer so accepted paths join the known set,
+then go back to step 2. Each accepted path adds deeper prefixes to the frontier.
+Stop at `max-tests` accepted
+tests or when the frontier is empty.
+
+Once per run, after the loop, type-check and lint the generated file with the
+project's own commands (`tsc --noEmit`, `cargo clippy --tests`, `ruff check`,
+`go vet`). Some runners skip type checking per test (`ts-jest` with
+`diagnostics: false`), so a candidate can pass the gate and still break the
+build. Map each error to the test whose lines contain it, drop that test, and
+report it as rejected.
+
+Do not prune generated tests by coverage. Two tests are redundant only if their
+recorded paths are identical, which the gate already prevents.
+
+## Output files
+
+Generated tests go in one file per module, separate from hand-written tests, so
+they can be reviewed and deleted as a group. Use the language's discovery rules:
+`target.generated.test.ts`, `test_target_generated.py`,
+`target_generated_test.go`, `tests/target_generated.rs`,
+`test/target_generated.jl` (and include it from `runtests.jl`). Start the file
+with this header in the language's comment syntax:
+
+```
+Machine-generated characterization tests (concolic-test-generation).
+Each test drives one execution path through <module>.
+Assertions describe current behavior, not intended behavior.
+Regenerate rather than hand-edit; delete the file to drop them all.
+```
+
+The ledger and traces go under `.concolic/` at the repository root. Add it to
+`.gitignore`. The ledger keys each retired path by its decisions and validates
+it against a hash of the whole source file: branch ids are numbered per file,
+so any edit can renumber every decision in a stored path.
+
+## Review pass (`review` mode)
+
+Generation answers "can this path execute". It says nothing about whether the
+behavior on that path is right, and the model that made the path execute should
+not also judge its assertion. The review pass asks the second question of every
+test in a generated file.
+
+Run it as a fresh subagent that did not write the tests, on the strongest model
+available (in Claude Code, the Agent tool with `model: "opus"`). Allow it only
+read-only tools: Read, Grep, Glob. It writes nothing; you apply its verdicts. Give it inline the test, the source of the module, and the module's
+specification comments and doc comments; let it search for the rest (design
+docs, callers, specs). Ask for one verdict per test:
+
+- `correct`: the pinned behavior is what the code should do. No change.
+- `unclear`: the sources do not decide it. No change.
+- `suspected-bug`: write the verdict and its reason as a comment above the
+  test, and draft an issue (location, input, observed, expected, evidence) in
+  `.concolic/issues/`. Keep the test: it is the evidence. Do not file the issue;
+  the user decides.
+
+Record whether a specification was available. A `correct` verdict reached from
+the source alone is weaker than one checked against a specification.
+
+## Bounds
+
+Path coverage is infinite once loops are involved, and exponential without
+them.
+
+- `max-depth` caps the prefix length targeted. A path longer than the cap is
+  never targeted.
+- `max-visits` caps how many times one branch may appear in a prefix before it
+  stops being a flip point. In a loop this keeps the target count proportional
+  to the branches in the module, not to the iteration count.
+- `max-tests` and `retries` cap the cost of a run.
 
 ## Output
 
-Report a concise summary at the end of the run:
+Report at the end of the run:
 
-1. **Coverage delta**: line and branch coverage on the target before vs. after.
-   Report branch coverage as unavailable when only line/statement coverage was
-   measured; list traced outcomes separately.
-2. **Resolved branches**: table or list of `(file:line, branch predicate,
-   negated path condition, test name, input summary)`.
-3. **Bugs uncovered** (if any): `file:line`, triggering input `I_new`, path
-   condition, failure mode, and fix recommendation.
-4. **Infeasible / dead branches**: `file:line`, the contradictory predicates
-   (`C_i` vs `D`), and whether the dead branch can be simplified or removed.
-5. **Unresolved branches** (if budget exhausted or complex external state
-   blocked inversion): `file:line` and what blocked satisfaction.
+1. **Paths**: distinct recorded paths before and after.
+2. **Accepted tests**: test name, target prefix as predicates, input summary.
+3. **Infeasible**: prefix, and the contradicting `C_i` and `D`.
+4. **Unreachable through the public API**: prefix, and the private binding the
+   path depends on.
+5. **Given up**: prefix and the last rejection reason.
+6. **Remaining frontier**: how many targets were left when `max-tests` stopped
+   the run.
+7. **Review verdicts** (review mode): counts, and each `suspected-bug` with its
+   issue draft path.
+
+State that the accepted tests are characterization tests and must be read
+before they are committed.
