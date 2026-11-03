@@ -126,6 +126,17 @@ with click-to-jump line anchors.
 It is a report: it asks nothing, posts nothing, and edits nothing. The output
 file needs no server and fetches nothing.
 
+### concolic-test-generation
+
+Generates tests that drive a module down execution paths its suite never takes.
+It records the ordered branch decisions each existing test makes, targets every
+path that shares a prefix with a known path and then flips one decision, and
+uses the model in place of an SMT solver to find inputs for that path. A test is
+kept only if its recorded path starts with the target prefix. Generated tests
+are characterization tests, written to a separate `*.generated` test file; an
+optional review pass on a stronger model judges whether each pinned behavior is
+correct.
+
 ## Install with Claude Code
 
 Add this marketplace, then install the plugin:
@@ -160,8 +171,8 @@ Invoke the skills as `$run-review-lenses`, `$adversarial-review`,
 `$dead-code-code-review`, `$ai-slop-code-review`, `$numerical-code-review`,
 `$codex-code-review` (which skips itself inside Codex),
 `$interactive-code-review`,
-`$ui-code-review`, or describe a matching task and let Codex
-select the skill.
+`$ui-code-review`, `$concolic-test-generation`, or describe a matching task
+and let Codex select the skill.
 
 ## Install with Antigravity
 

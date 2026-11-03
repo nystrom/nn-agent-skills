@@ -1,7 +1,7 @@
 {
   "name": "nn-agent-skills",
-  "version": "1.2.0",
-  "description": "Review lenses (adversarial, performance, risk, test coverage, dead code, AI slop, numerical, Codex), run every installed lens for the findings alone, walk a change set one change at a time, or read the whole review as one HTML page.",
+  "version": "1.3.0",
+  "description": "Review lenses (adversarial, performance, risk, test coverage, dead code, AI slop, numerical, Codex), run every installed lens for the findings alone, walk a change set one change at a time, or read the whole review as one HTML page, plus a concolic test generator that targets unexplored execution paths.",
   "author": {
     "name": "nystrom"
   },
@@ -13,6 +13,8 @@
     "github",
     "interactive",
     "refactoring",
-    "performance"
+    "performance",
+    "testing",
+    "concolic"
   ]
 }
