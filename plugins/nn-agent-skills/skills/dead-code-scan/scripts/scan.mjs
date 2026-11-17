@@ -3,6 +3,8 @@
 // Language-neutral helper for the dead-code-scan skill.
 //
 //   scan.mjs [scan] [options]   list candidates, roots, and skipped files
+//   scan.mjs diff-scope [opts]  print the files a change touches and the symbols it orphans
+//   scan.mjs wire FILE          print a judged findings file as review-lens wire findings
 //   scan.mjs validate FILE      check a findings file after the judgment pass
 //
 // Read-only: the only file written is the one named by --out. Without --out the
@@ -21,6 +23,8 @@ import { existsSync, lstatSync, readFileSync, realpathSync, writeFileSync } from
 import path from "node:path";
 
 const usage = `usage: scan.mjs [scan] [options]
+       scan.mjs diff-scope [--base <ref>] [--working-tree]
+       scan.mjs wire FILE
        scan.mjs validate FILE
 
 Run from inside the git repository to scan.
@@ -44,6 +48,14 @@ Options:
                         said so). Repeatable. Paths are relative to the
                         current directory; run from the repository root. The
                         most specific path wins.
+  --base <ref>          Diff scope: list only candidates in files that
+                        <ref>...HEAD touches, and candidates the diff orphans.
+                        A range (A..B or A...B) is diffed as given.
+                        Roots, public API, and the reference index still cover
+                        the whole repository at HEAD.
+  --working-tree        With --base, include uncommitted and untracked files.
+  --format wire         Print review-lens wire findings (a JSON array) instead
+                        of the scan document.
   --no-external         Skip the cross-repository search. Use only when the
                         repository has no consumers elsewhere.
   --org <owner>         GitHub owner to search. Default: owner of the origin
@@ -56,6 +68,8 @@ Options:
   -h, --help            This text.
 
 The findings JSON goes to stdout (or --out); a summary goes to stderr.
+diff-scope prints {base, files, orphan_symbols, removed_only_symbols}.
+wire turns a findings file after the judgment pass into the wire format.
 validate checks that every script finding carries a judgment and every
 finding names its source and evidence source.
 `;
@@ -189,6 +203,10 @@ function parseArgs(argv) {
     scopes: [],
     keep: new Set(),
     acceptRoots: [],
+    base: undefined,
+    workingTree: false,
+    format: "scan",
+    diffScopeOnly: false,
     publicApi: [],
     notPublic: [],
     out: undefined,
@@ -234,6 +252,21 @@ function parseArgs(argv) {
         }
         break;
       }
+      case "--diff-scope-only":
+        options.diffScopeOnly = true;
+        continue;
+      case "--base":
+        options.base = value(i, "--base");
+        break;
+      case "--working-tree":
+        options.workingTree = true;
+        continue;
+      case "--format":
+        options.format = value(i, "--format");
+        if (!["scan", "wire"].includes(options.format)) {
+          fail("--format needs scan or wire");
+        }
+        break;
       case "--public-api":
         options.publicApi.push(value(i, "--public-api"));
         break;
@@ -426,6 +459,85 @@ function hasSideEffectInitializer(line, keyword) {
     return false;
   }
   return /[\p{L}\p{N}_$.\])]\s*\(/u.test(rhs) || /^[^;]*,\s*[\p{L}_$][\p{L}\p{N}_$]*\s*=/u.test(line);
+}
+
+/**
+ * What a change touches. `files` are the paths in the diff (plus untracked
+ * files with --working-tree). A symbol is orphaned when the diff removes more
+ * of its occurrences than it adds and one occurrence remains at HEAD: that is
+ * the declaration, whose last reference the diff took away. The base count is
+ * the head count minus added plus removed occurrences. Symbols named only in
+ * removed lines (count zero at HEAD) are listed separately.
+ */
+function diffInfo(root, options, index) {
+  // A named range (A..B or A...B) is diffed as given. A single ref is diffed
+  // from its merge base with HEAD, through the working tree when asked.
+  const isRange = options.base.includes("..");
+  if (isRange && options.workingTree) {
+    fail("--working-tree needs a single base ref, not a range");
+  }
+  let range;
+  if (isRange) {
+    range = [options.base];
+  } else {
+    const mergeBase = run("git", ["merge-base", options.base, "HEAD"], root);
+    if (mergeBase.status !== 0) {
+      fail(`cannot find a merge base of ${options.base} and HEAD; fetch the base first`);
+    }
+    range = options.workingTree ? [mergeBase.stdout.trim()] : [`${options.base}...HEAD`];
+  }
+  // -z gives unquoted paths; a rename or copy lists the new path last.
+  const names = run("git", ["diff", "--name-status", "-z", "-M", "--no-ext-diff", ...range], root);
+  const patch = run("git", ["diff", "--unified=0", "--no-color", "--no-ext-diff", "--no-renames", ...range], root);
+  if (names.status !== 0 || patch.status !== 0) {
+    fail(`git diff failed: ${(names.stderr || patch.stderr).trim()}`);
+  }
+  const files = new Set();
+  const fields = names.stdout.split("\0");
+  for (let i = 0; i < fields.length - 1; ) {
+    const status = fields[i];
+    const width = /^[RC]/.test(status) ? 2 : 1;
+    if (!status.startsWith("D")) {
+      files.add(fields[i + width]);
+    }
+    i += 1 + width;
+  }
+  const added = new Map();
+  const removed = new Map();
+  const count = (map, text) => {
+    for (const match of text.matchAll(IDENTIFIER)) {
+      map.set(match[0], (map.get(match[0]) ?? 0) + 1);
+    }
+  };
+  // Count only lines inside hunks, so a content line that starts with "+++ "
+  // or "--- " is not taken for a file header.
+  let inHunk = false;
+  for (const line of patch.stdout.split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      inHunk = false;
+    } else if (line.startsWith("@@")) {
+      inHunk = true;
+    } else if (inHunk && line.startsWith("+")) {
+      count(added, line.slice(1));
+    } else if (inHunk && line.startsWith("-")) {
+      count(removed, line.slice(1));
+    }
+  }
+  if (options.workingTree) {
+    const untracked = run("git", ["ls-files", "--others", "--exclude-standard"], root);
+    untracked.stdout.split("\n").filter((f) => f !== "").forEach((f) => files.add(f));
+  }
+  const orphans = new Set();
+  const removedOnly = new Set();
+  for (const [name, n] of removed) {
+    const head = index.occurrences.get(name) ?? 0;
+    if (head === 0) {
+      removedOnly.add(name);
+    } else if (head === 1 && n > (added.get(name) ?? 0)) {
+      orphans.add(name);
+    }
+  }
+  return { base: options.base, workingTree: options.workingTree, files, orphans, removedOnly };
 }
 
 /**
@@ -990,12 +1102,13 @@ function buildFindings(found, root, options, index, blockFor, publicFor, externa
       id: "",
       source: "script",
       evidence_source: "text",
-      severity: refused !== undefined ? "question" : exportCheck ? "low" : "nit",
+      severity: refused !== undefined ? "question" : exportCheck ? "medium" : "low",
       check: candidate.check,
       file: candidate.file,
       line: candidate.line,
       symbol: candidate.name,
       language: LANGUAGES[extOf(candidate.file)],
+      ...(candidate.diffReason === undefined ? {} : { diff_reason: candidate.diffReason }),
       visibility_hint: candidate.hint,
       external: state.external,
       signal: exportCheck
@@ -1038,6 +1151,9 @@ function summarize(document) {
   if (shown.length > 20) {
     lines.push(`  ... ${shown.length - 20} more in the JSON`);
   }
+  for (const w of document.warnings) {
+    lines.push(`  warning: ${w}`);
+  }
   for (const r of document.roots.unresolved) {
     lines.push(`  unresolved root: ${r.id}`);
   }
@@ -1054,6 +1170,111 @@ function summarize(document) {
   return lines.join("\n") + "\n";
 }
 
+/** The findings file must be a regular file outside the repository under review. */
+function checkOut(root, options) {
+  if (options.out === undefined) {
+    return;
+  }
+  try {
+    if (lstatSync(path.resolve(process.cwd(), options.out)).isSymbolicLink()) {
+      fail("--out is a symbolic link; name a regular file");
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  const parent = path.dirname(path.resolve(process.cwd(), options.out));
+  const real = existsSync(parent) ? realpathSync(parent) : parent;
+  if (!path.relative(root, path.join(real, path.basename(options.out))).startsWith("..")) {
+    fail("--out is inside the repository under review; write the findings outside it, for example under the system temp dir");
+  }
+}
+
+function outputText(options, text) {
+  if (options.out === undefined) {
+    process.stdout.write(text);
+  } else {
+    writeFileSync(options.out, text);
+  }
+}
+
+const WIRE_SEVERITY = { blocker: "blocker", high: "high", medium: "medium", low: "low", nit: "low", question: "low" };
+
+/**
+ * Review-lens wire findings from a scan document, judged or not. Dropped
+ * findings and unjudged refusals are left out. Unresolved roots become one
+ * `low` finding that says what to ask the user.
+ */
+function toWire(document) {
+  const roots = [...document.roots.found, ...document.roots.unresolved].map((r) => r.id).join(", ");
+  const wire = [];
+  for (const f of document.findings) {
+    const overturned = f.judgment === "overturned";
+    if (f.judgment === "dropped" || (f.refused === true && !overturned)) {
+      continue;
+    }
+    const origin = f.source === "reviewer" ? "reviewer" : "script";
+    const unjudged = f.source !== "reviewer" && (f.judgment === null || f.judgment === undefined);
+    const verified = f.judgment === "confirmed" && (f.evidence_source === "lsp" || f.evidence_source === "read");
+    wire.push({
+      source: "dead-code-scan",
+      path: f.file,
+      line: f.line ?? null,
+      severity: unjudged ? "low" : (WIRE_SEVERITY[f.severity] ?? "low"),
+      title:
+        (unjudged ? "Candidate: " : "") +
+        (f.check === "dead-reexport"
+          ? `Remove re-export ${f.symbol ?? ""}`.trim()
+          : f.symbol === undefined
+            ? "Dead code"
+            : `Remove unused ${f.symbol}`),
+      body:
+        `Finding source: ${origin}. ${unjudged ? "Unjudged scan candidate: confirm the roots and callers before acting. " : ""}${f.signal ?? ""} ` +
+        (f.judgment_reason === undefined ? "" : `Judgment: ${f.judgment}, ${f.judgment_reason}.`),
+      suggested_fix: f.proposal,
+      evidence: `${verified ? "Verified" : "Inferred"}: ${f.evidence_source} evidence; ${f.evidence}; roots considered: ${roots}`,
+    });
+  }
+  if (document.roots.unresolved.length > 0) {
+    const open = document.roots.unresolved.map((r) => `${r.id} (${r.detail})`).join("; ");
+    wire.push({
+      source: "dead-code-scan",
+      path: ".",
+      line: null,
+      severity: "low",
+      title: "Roots the scan could not evaluate",
+      body: `These roots may reach code the scan lists as dead or refused: ${open}`,
+      suggested_fix:
+        "Ask the user which files or symbols each root loads, which packages are public API, and which repositories consume this one. Then rerun with --accept-root, --public-api, or --not-public.",
+      evidence: `Inferred: roots.unresolved in the scan document; roots considered: ${roots}`,
+    });
+  }
+  return wire;
+}
+
+const headline = (wire) =>
+  wire.some((w) => ["blocker", "high", "medium"].includes(w.severity)) ? "needs-attention" : "approve";
+
+function wireCommand(argv) {
+  if (argv.length !== 1) {
+    fail(`wire needs one findings file\n${usage}`);
+  }
+  let document;
+  try {
+    document = JSON.parse(readFileSync(argv[0], "utf8"));
+  } catch (error) {
+    fail(`cannot read ${argv[0]}: ${error.message}`);
+  }
+  const problems = validationProblems(document);
+  if (problems.length > 0) {
+    fail(`the findings file is not valid; run validate\n${problems.join("\n")}`);
+  }
+  const wire = toWire(document);
+  process.stdout.write(JSON.stringify(wire, null, 2) + "\n");
+  process.stderr.write(`headline: ${headline(wire)}\n`);
+}
+
 function scan(argv) {
   const options = parseArgs(argv);
   const root = gitRoot();
@@ -1066,22 +1287,7 @@ function scan(argv) {
   // The repository root among the scopes means the whole repository.
   const scopes = resolved.includes("") ? [] : resolved;
 
-  if (options.out !== undefined) {
-    try {
-      if (lstatSync(path.resolve(process.cwd(), options.out)).isSymbolicLink()) {
-        fail("--out is a symbolic link; name a regular file");
-      }
-    } catch (error) {
-      if (error.code !== "ENOENT") {
-        throw error;
-      }
-    }
-    const parent = path.dirname(path.resolve(process.cwd(), options.out));
-    const real = existsSync(parent) ? realpathSync(parent) : parent;
-    if (!path.relative(root, path.join(real, path.basename(options.out))).startsWith("..")) {
-      fail("--out is inside the repository under review; write the findings outside it, for example under the system temp dir");
-    }
-  }
+  checkOut(root, options);
   const relative = (s) => path.relative(root, path.resolve(process.cwd(), s)).split(path.sep).join("/");
   options.publicApi = options.publicApi.map(relative);
   options.notPublic = options.notPublic.map(relative);
@@ -1090,9 +1296,36 @@ function scan(argv) {
   }
   const files = repoFiles(root);
   const index = readRepository(root, files, options);
-  const found = candidates(files, index, scopes).sort(
-    (a, b) => a.check.localeCompare(b.check) || a.file.localeCompare(b.file) || a.line - b.line
-  );
+  if (options.diffScopeOnly && options.base === undefined) {
+    options.base = "origin/main";
+  }
+  const diff = options.base === undefined ? undefined : diffInfo(root, options, index);
+  const warnings = [];
+  if (diff !== undefined && !options.workingTree) {
+    const dirty = run("git", ["status", "--porcelain"], root).stdout.trim();
+    if (dirty !== "") {
+      warnings.push(
+        "the working tree has uncommitted changes; the reference index reads the working tree, not HEAD. Commit or stash them, or pass --working-tree to review them."
+      );
+    }
+  }
+  if (options.diffScopeOnly) {
+    const info = {
+      base: diff.base,
+      working_tree: diff.workingTree,
+      files: [...diff.files].sort(),
+      orphan_symbols: [...diff.orphans].sort(),
+      removed_only_symbols: [...diff.removedOnly].sort(),
+    };
+    outputText(options, JSON.stringify(info, null, 2) + "\n");
+    return;
+  }
+  const found = candidates(files, index, scopes)
+    .filter((c) => diff === undefined || diff.files.has(c.file) || diff.orphans.has(c.name))
+    .map((c) =>
+      diff === undefined ? c : { ...c, diffReason: diff.files.has(c.file) ? "touched" : "orphaned" }
+    )
+    .sort((a, b) => a.check.localeCompare(b.check) || a.file.localeCompare(b.file) || a.line - b.line);
   const kept = found.slice(0, options.maxCandidates);
 
   // Roots come first so that a symbol an unevaluated root may load costs no
@@ -1131,8 +1364,14 @@ function scan(argv) {
   const reported = built.findings.filter((f) => !f.refused).length;
   const document = {
     tool: "dead-code-scan",
-    scope: scopes.length === 0 ? "whole repository" : scopes.join(", "),
+    scope:
+      (diff === undefined ? "" : `diff against ${diff.base}${diff.workingTree ? " with the working tree" : ""}; `) +
+      (scopes.length === 0 ? "whole repository" : scopes.join(", ")),
+    ...(diff === undefined
+      ? {}
+      : { diff: { base: diff.base, files: [...diff.files].sort(), orphan_symbols: [...diff.orphans].sort() } }),
     generated_at: new Date().toISOString(),
+    warnings,
     counts: {
       candidates: kept.length,
       refused: built.findings.length - reported,
@@ -1145,11 +1384,12 @@ function scan(argv) {
     unlisted_file_types: Object.fromEntries(unlistedTypes),
     findings: built.findings,
   };
-  const json = JSON.stringify(document, null, 2) + "\n";
-  if (options.out === undefined) {
-    process.stdout.write(json);
+  if (options.format === "wire") {
+    const wire = toWire(document);
+    outputText(options, JSON.stringify(wire, null, 2) + "\n");
+    process.stderr.write(`headline: ${headline(wire)}\n`);
   } else {
-    writeFileSync(options.out, json);
+    outputText(options, JSON.stringify(document, null, 2) + "\n");
   }
   process.stderr.write(summarize(document));
   // Candidates and refusals both need the judgment pass. `exitCode` rather
@@ -1217,6 +1457,10 @@ function main() {
   const [first, ...rest] = process.argv.slice(2);
   if (first === "validate") {
     validate(rest);
+  } else if (first === "wire") {
+    wireCommand(rest);
+  } else if (first === "diff-scope") {
+    scan(["--diff-scope-only", ...rest]);
   } else {
     scan(first === "scan" ? rest : process.argv.slice(2));
   }

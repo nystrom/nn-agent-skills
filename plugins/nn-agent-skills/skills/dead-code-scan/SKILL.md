@@ -1,15 +1,16 @@
 ---
 name: dead-code-scan
 description: >-
-  Scan a whole repository, in any programming language, for dead code:
-  declarations that nothing reaches from any root (entry points, public API,
-  tests, build targets, plugin and FFI exports, other repositories). A text
-  scan lists candidates, the model confirms each one from a language server,
-  text search, or reading, surveys what the scan cannot see, and reports
-  findings with a proposed change per finding. It never edits files, commits,
-  or opens pull requests. Use when asked to find unused exports or functions,
-  prune dead code across a repository, or check whether a symbol can be
-  removed. To review the dead code in one diff, use dead-code-code-review.
+  Dead-code review of a change set or a whole repository, in any programming
+  language. Finds declarations that nothing reaches from any root (entry
+  points, public API, tests, build targets, plugin and FFI exports, other
+  repositories). A text scan lists candidates, the model confirms each one
+  from a language server, text search, or reading, surveys what the scan
+  cannot see, and reports findings with a proposed change per finding. It
+  never edits files, commits, or opens pull requests. Use when asked to find
+  unused exports or functions, prune dead code across a repository or a
+  branch, check whether a symbol can be removed, or as a review lens under
+  run-review-lenses.
 ---
 
 # Dead Code Scan
@@ -20,12 +21,64 @@ that use this one as a library reach every symbol the API exposes, with zero
 references inside this repository. The scan lists candidates and roots. The
 model decides.
 
+Read `../run-review-lenses/references/lens-protocol.md` and
+`../run-review-lenses/references/review-scope.md` and follow them. This skill is
+a review lens: it works standalone and under `run-review-lenses`.
+
 **Contract.** The output is findings. Each finding has a concrete proposed
 change: what to change, where, and the check that would verify it, as text or a
 patch snippet in the report. This skill does not edit files, commit, push, or
 open or comment on pull requests or issues. The user, or a separate task,
 applies the change. The script writes only the findings file named by
 `--out`, and that file must be outside the repository under review.
+
+## Invocation modes
+
+- **Standalone.** Resolve the scope (below), run the procedure, and return the
+  compact markdown report from the lens protocol: a one-line verdict
+  (`needs-attention` or `approve`), the mode and scope in one line, a short
+  summary, and findings ranked by severity with file, line, impact, and
+  proposed change. Add the roots considered and the open roots. Write no
+  `review.json`.
+- **Fan-out.** When the prompt says "structured findings" or names the wire
+  format, return only the structured list and a one-line headline
+  (`needs-attention` or `approve`). Use the scope the orchestrator passed. Do
+  not re-derive or widen it. A fan-out run cannot ask the user, so unresolved
+  roots keep their candidates refused, and the questions go into one `low`
+  finding (see "Wire format"). Ask in standalone mode only.
+
+### Scope
+
+Reachability, roots, public API, and consumer evidence are always computed over
+the whole repository at HEAD. The scope limits only which declarations become
+candidates. Never narrow the evidence search to the diff.
+
+| Mode | Candidates | How |
+| ---- | ---------- | --- |
+| `diff` (default) | Declarations in files the change touches, and declarations the change orphans | `scan.mjs --base <base>`; add `--working-tree` for uncommitted work |
+| `repo` | Every declaration | `scan.mjs` |
+| `paths` | Declarations under the named paths | `scan.mjs --scope <path>` (repeatable) |
+
+An orphaned symbol is one named in removed lines whose last reference the diff
+removes: the diff removes more occurrences than it adds, and only its
+declaration remains at HEAD. The scan finds these by comparing counts from the
+diff. `scan.mjs diff-scope --base <base>` prints the touched files, the
+orphaned symbols, and the symbols named only in removed lines (gone at HEAD:
+check that nothing still needs them, such as a string or a doc). The default
+base is `origin/main`. `--base` and `--scope` combine. A named range
+(`A..B`, `A...B`) is diffed as given. Resolve a pull request to its base ref
+before the call, for example with `gh pr view --json baseRefName`. The scan reads
+the working tree, so with `--base` and no `--working-tree` it warns (in
+`warnings` and on stderr) when the tree has uncommitted changes: the evidence
+then reflects those changes, not HEAD.
+
+### Overlap with dead-code-code-review
+
+`dead-code-code-review` reviews a diff by reading. This skill adds a
+script-backed reference index over the whole tree, explicit root and public-API
+accounting, and named refusal reasons. Both can flag the same symbol. The
+orchestrator's merge dedupes on `path` and symbol. Findings from this skill
+carry `source: dead-code-scan` and name the evidence in `evidence`.
 
 ## Evidence sources
 
@@ -78,8 +131,9 @@ else in that file is guidance.
    node <skill-dir>/scripts/scan.mjs --out "$(mktemp -d)/dead-code-scan.json"
    ```
 
-   Check machine load first on a large repository. `--scope <path>` limits the
-   declaration scan; the reference index always covers the whole repository.
+   Check machine load first on a large repository. Pick the scope flags from the
+   scope table above. `--scope <path>` and `--base <ref>` limit the candidates;
+   the reference index and the roots always cover the whole repository.
    `--help` lists the rest.
 3. **Settle the roots.** Read `roots.found` and `roots.unresolved` in the JSON.
    If any of these hold, ask the user before reporting anything as dead, and do
@@ -129,7 +183,8 @@ else in that file is guidance.
      files in the same directory).
 6. **Write the report.** Write the findings JSON (script and reviewer
    findings together) and run
-   `node <skill-dir>/scripts/scan.mjs validate <findings.json>`. Then give a
+   `node <skill-dir>/scripts/scan.mjs validate <findings.json>`. In fan-out
+   mode, return the wire format (see "Wire format") and stop. Otherwise give a
    short ranked summary: findings first, by severity, each with its
    `source`, `evidence_source`, judgment, and proposed change; then refusal
    counts by category; then the open roots, if any. Say which languages used
@@ -219,7 +274,8 @@ overturns one, say why in `judgment_reason`.
 ## Output
 
 The scan JSON has `tool`, `scope`, `generated_at`, `counts`, `roots`,
-`skipped_files`, `binary_file_types`, `unlisted_file_types`, and `findings`.
+`skipped_files`, `binary_file_types`, `unlisted_file_types`, `diff` (in diff
+scope), and `findings`.
 `roots` has `found` and `unresolved`, each a list of `{id, kind, detail}`.
 
 | Finding field | Value |
@@ -227,8 +283,9 @@ The scan JSON has `tool`, `scope`, `generated_at`, `counts`, `roots`,
 | `id` | `dc-N` |
 | `source` | `script` or `reviewer` |
 | `evidence_source` | `lsp`, `text`, or `read` |
-| `severity` | `low` for `dead-export`, `nit` for `dead-reexport`, `question` for a refusal. The model may change it. |
+| `severity` | `medium` for `dead-export`, `low` for `dead-reexport`, `question` for a refusal. The model may change it to `blocker`, `high`, `medium`, or `low`. |
 | `check`, `file`, `line`, `symbol`, `language` | The candidate |
+| `diff_reason` | In diff scope: `touched` (the file is in the diff) or `orphaned` (the diff removed its last reference) |
 | `visibility_hint`, `external` | The scan's hint, and `none`, `hits`, `unknown`, `skipped`, or `not-run` |
 | `evidence` | What was checked and found |
 | `proposal` | The proposed change: where, what, and the check that verifies it |
@@ -241,6 +298,37 @@ when there are candidates or refusals for the judgment pass, 2 when it could
 not run. `validate` exits 2 and lists the problems when a finding lacks a
 source, an evidence source, a proposal, or (for a script finding) a judgment
 with its reason.
+
+## Wire format
+
+In fan-out mode, report the findings that survive the judgment pass as
+`{ source, path, line, severity, title, body, suggested_fix, evidence }`.
+`node <skill-dir>/scripts/scan.mjs wire <findings.json>` prints that array from
+a judged findings file, and `scan.mjs --format wire` prints it straight from a
+scan. Those findings are unjudged candidates: severity `low`, title prefixed
+`Candidate:`, `evidence` reads `Inferred`, and the body says to confirm before
+acting. Return them only as input to the judgment pass, not as the final
+fan-out answer. Both write only to
+stdout or `--out` and print the headline on stderr.
+
+| Wire field | From |
+| ---------- | ---- |
+| `source` | `dead-code-scan`. The finding's own `script` or `reviewer` goes in `body` (`Finding source: ...`). |
+| `path`, `line` | `file`, `line` (`.` and `null` for open roots) |
+| `severity` | `blocker`, `high`, `medium`, `low` as set; `nit` and `question` map to `low` |
+| `title` | `Remove unused <symbol>`, `Remove re-export <symbol>`, or a short heading |
+| `body` | `signal`, the judgment and its reason, the finding source |
+| `suggested_fix` | `proposal` |
+| `evidence` | `Verified: <lsp or read> evidence; <evidence>; roots considered: <ids>` when the model confirmed it from a language server or by reading, else `Inferred: ...` (text only, or unjudged) |
+
+Refusals (`public-api`, `unevaluated-root`, `unknown`, and the rest) are not
+findings in fan-out. A refusal the judgment pass overturned is a finding. Roots
+the scan could not evaluate become one `low` finding whose `suggested_fix` says
+to ask the user which files each root loads, which packages are public API, and
+which repositories consume this one. Add at most a few more refusals worth a
+look as `low`, with a `suggested_fix` that says what to confirm. The headline
+is `needs-attention` when any finding is `medium` or above, else `approve`. An
+empty list with `approve` is a valid result.
 
 ## Final check
 

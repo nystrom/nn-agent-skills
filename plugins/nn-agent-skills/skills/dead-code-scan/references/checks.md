@@ -5,6 +5,33 @@ sees, and where the model must look instead. A tool that proposes deletions and
 fires on a guess asks for working code to be deleted, so each bound errs toward
 refusal. The scan is text based and has no language parser.
 
+## Diff scope
+
+`--base <ref>` keeps a candidate when its file is in `git diff <ref>...HEAD` (or
+the diff from the merge base with the working tree, plus untracked files, with
+`--working-tree`), or when the diff orphans its name. A name is orphaned when
+the diff removes more occurrences of it than it adds and one occurrence remains
+at HEAD. The base count is the HEAD count minus added plus removed, so no
+checkout of the base is needed. The reference index, roots, and public API are
+computed over the whole tree at HEAD in every mode.
+
+- A symbol whose declaration moved or was renamed in the diff appears in
+  removed and added lines, so it is not orphaned. The model reads such moves.
+- A symbol that loses its last use but keeps a second occurrence (a comment, a
+  re-export) is not orphaned, and not a candidate either.
+- Names in removed lines with no occurrence left at HEAD are listed as
+  `removed_only_symbols` and are not candidates. A string, a doc, or a config
+  can still name them; the model searches for those.
+- A diff that renames a file counts as touching the new path. Paths come from
+  `git diff --name-status -z`, so quoted or non-ASCII names match. Counts come
+  from lines inside hunks only.
+- A named range is diffed as given. A pull request is not resolved by the scan.
+- The reference index reads the working tree, never the HEAD tree. With `--base`
+  and a dirty tree, an uncommitted edit that removes a live reference can make a
+  symbol look dead, so the scan adds a warning. Reading the HEAD tree is not
+  attempted: a clean checkout of the head is the supported way to get HEAD
+  evidence.
+
 ## Reference index
 
 Every identifier token in every text file git lists (tracked, or untracked and

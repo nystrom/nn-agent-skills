@@ -587,3 +587,161 @@ test("a root id with a colon can be accepted whole or by path", () => {
   assert.equal(scoped.get("pageA").refused, false);
   assert.equal(scoped.get("pageB").category, "unevaluated-root");
 });
+
+function git(root, ...args) {
+  const result = spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr);
+}
+
+/** A repository with a base commit and a change that orphans `helper`. */
+function changed() {
+  const root = repo({
+    "package.json": { name: "p", private: true },
+    "src/lib.ts": "export function helper() {}\n",
+    "src/use.ts": 'import { helper } from "./lib";\nhelper();\ngone_symbol();\n',
+    "src/old.ts": "export function untouchedDead() {}\n",
+  });
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "base");
+  git(root, "tag", "base");
+  writeFileSync(join(root, "src/use.ts"), "export const kept = 1;\n");
+  writeFileSync(join(root, "src/new.ts"), "export function newDead() {}\n");
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "change");
+  return root;
+}
+
+test("diff scope keeps candidates in touched files and orphaned symbols only", () => {
+  const document = run(changed(), [...ext, "--not-public", ".", "--base", "base"]).document;
+  const found = bySymbol(document);
+  assert.deepEqual(names(document, false), ["helper", "kept", "newDead"]);
+  assert.equal(found.get("newDead").diff_reason, "touched");
+  assert.equal(found.get("helper").diff_reason, "orphaned");
+  assert.equal(found.has("untouchedDead"), false);
+  assert.deepEqual(document.diff.orphan_symbols, ["helper"]);
+  assert.match(document.scope, /diff against base/);
+});
+
+test("diff scope still computes roots and references over the whole repository", () => {
+  const root = changed();
+  writeFileSync(join(root, "README.md"), "Call newDead to start.\n");
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "doc");
+  const document = run(root, [...ext, "--not-public", ".", "--base", "base"]).document;
+  assert.equal(bySymbol(document).has("newDead"), false);
+  assert.ok(document.roots.found.some((r) => r.id === "docs-and-data"));
+});
+
+test("diff-scope lists touched files, orphaned symbols, and removed-only symbols", () => {
+  const result = run(changed(), ["diff-scope", "--base", "base"]);
+  assert.equal(result.status, 0);
+  assert.deepEqual(result.document.files, ["src/new.ts", "src/use.ts"]);
+  assert.deepEqual(result.document.orphan_symbols, ["helper"]);
+  assert.ok(result.document.removed_only_symbols.includes("gone_symbol"));
+});
+
+test("--working-tree adds uncommitted and untracked files to the diff scope", () => {
+  const root = changed();
+  writeFileSync(join(root, "src/dirty.ts"), "export function dirtyDead() {}\n");
+  const without = run(root, [...ext, "--not-public", ".", "--base", "base"]).document;
+  assert.equal(bySymbol(without).has("dirtyDead"), false);
+  const withTree = run(root, [...ext, "--not-public", ".", "--base", "base", "--working-tree"]).document;
+  assert.equal(bySymbol(withTree).get("dirtyDead").refused, false);
+});
+
+test("a missing base exits 2", () => {
+  const result = run(changed(), [...ext, "--base", "no-such-ref"]);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /merge base/);
+});
+
+test("--format wire prints review-lens findings and a headline", () => {
+  const result = run(repo(fixture), [...local, "--format", "wire"]);
+  assert.ok(Array.isArray(result.document));
+  const finding = result.document.find((f) => f.path === "src/ts.ts" && /tsDead/.test(f.title));
+  assert.match(finding.title, /^Candidate: /);
+  assert.deepEqual(Object.keys(finding), [
+    "source", "path", "line", "severity", "title", "body", "suggested_fix", "evidence",
+  ]);
+  assert.equal(finding.source, "dead-code-scan");
+  assert.equal(finding.severity, "low");
+  assert.match(finding.body, /Unjudged scan candidate/);
+  assert.match(finding.evidence, /^Inferred: text evidence;/);
+  assert.match(finding.evidence, /roots considered:/);
+  assert.match(finding.suggested_fix, /Proposed change/);
+  assert.match(result.stderr, /headline: approve/);
+});
+
+test("wire leaves out refusals and dropped findings, and reports open roots", () => {
+  const base = { source: "script", evidence_source: "lsp", file: "a.ts", evidence: "e", proposal: "p", judgment_reason: "r" };
+  const file = join(tempDir(), "judged.json");
+  writeFileSync(
+    file,
+    JSON.stringify({
+      roots: { found: [{ id: "tests" }], unresolved: [{ id: "dynamic-loading", detail: "x.py:1" }] },
+      findings: [
+        { ...base, id: "dc-1", symbol: "kept", severity: "medium", check: "dead-export", refused: false, judgment: "confirmed", line: 3 },
+        { ...base, id: "dc-2", symbol: "gone", severity: "medium", check: "dead-export", refused: false, judgment: "dropped" },
+        { ...base, id: "dc-3", symbol: "api", severity: "question", check: "dead-export", refused: true, category: "public-api", judgment: "confirmed" },
+        { ...base, id: "dc-4", symbol: "dead", severity: "question", check: "dead-export", refused: true, judgment: "overturned" },
+        { ...base, id: "dc-5", source: "reviewer", evidence_source: "read", symbol: undefined, file: "b.go", severity: "high", signal: "unused table" },
+      ],
+    })
+  );
+  const result = run(tempDir(), ["wire", file]);
+  assert.equal(result.status, 0);
+  const titles = result.document.map((f) => f.title);
+  assert.deepEqual(titles, ["Remove unused kept", "Remove unused dead", "Dead code", "Roots the scan could not evaluate"]);
+  assert.match(result.document[0].evidence, /^Verified: lsp evidence;/);
+  assert.match(result.document[2].body, /Finding source: reviewer/);
+  assert.equal(result.document[3].severity, "low");
+  assert.match(result.document[3].suggested_fix, /Ask the user/);
+  assert.match(result.stderr, /headline: needs-attention/);
+});
+
+test("wire exits 2 on an unjudged file", () => {
+  const file = join(tempDir(), "unjudged.json");
+  writeFileSync(
+    file,
+    JSON.stringify({
+      roots: { found: [], unresolved: [] },
+      findings: [{ id: "dc-1", source: "script", evidence_source: "text", file: "a", evidence: "e", proposal: "p", judgment: null }],
+    })
+  );
+  assert.equal(run(tempDir(), ["wire", file]).status, 2);
+});
+
+test("diff scope follows renames, ignores header-like content, and accepts a range", () => {
+  const root = repo({
+    "package.json": { name: "p", private: true },
+    "src/old-name.ts": "export function movedDead() {}\n",
+    "src/note.txt": "keep\n",
+  });
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "base");
+  git(root, "tag", "base");
+  git(root, "mv", "src/old-name.ts", "src/new-name.ts");
+  writeFileSync(join(root, "src/note.txt"), "keep\n++ x\n-- y\n");
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "change");
+  const info = run(root, ["diff-scope", "--base", "base..HEAD"]).document;
+  assert.deepEqual(info.files, ["src/new-name.ts", "src/note.txt"]);
+  const document = run(root, [...ext, "--not-public", ".", "--base", "base..HEAD"]).document;
+  assert.deepEqual(names(document, false), ["movedDead"]);
+});
+
+test("a dirty working tree is a warning in diff scope", () => {
+  const root = changed();
+  writeFileSync(join(root, "src/dirty.ts"), "export const dirty = 1;\n");
+  const document = run(root, [...ext, "--not-public", ".", "--base", "base"]).document;
+  assert.match(document.warnings[0], /uncommitted changes/);
+  assert.deepEqual(run(changed(), [...ext, "--not-public", ".", "--base", "base"]).document.warnings, []);
+});
+
+test("--working-tree rejects a range", () => {
+  const result = run(changed(), [...ext, "--base", "base..HEAD", "--working-tree"]);
+  assert.equal(result.status, 2);
+});

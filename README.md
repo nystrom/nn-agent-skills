@@ -148,7 +148,9 @@ scan cannot see, and asks you which packages are public API and about roots it
 cannot evaluate before it reports anything as dead. The output is findings,
 each with a proposed change and the check that verifies it. The skill does not
 edit files, commit, or open pull requests. The scan needs Node and git, and
-`gh` for the cross-repository search.
+`gh` for the cross-repository search. It is also a review lens: it follows the
+lens protocol, takes the `diff`, `repo`, or `paths` scope, and returns the
+wire format under `run-review-lenses`.
 
 ## Install with Claude Code
 
