@@ -139,14 +139,15 @@ correct.
 
 ### dead-code-scan
 
-Scans a JavaScript or TypeScript repository for exported declarations whose
-name occurs nowhere else, and for nested-barrel re-exports that only the barrel
-and its source file name. Each candidate is checked against the package
-manifests and, through `gh search code`, against other repositories. A symbol
-is reported only when the scan can show that no outside code uses it; anything
-else is a recorded refusal. It writes a findings JSON file and a short ranked
-summary, proposes deletions, and edits only when asked. It needs the
-repository's `typescript` package.
+Finds dead code in a repository in any programming language: declarations that
+nothing reaches from any root (entry points, public API, tests, build targets,
+plugin and FFI exports, other repositories). A text scan lists candidates and
+the roots it recognizes. The model then confirms each candidate from a language
+server, text search, or reading, surveys what the scan cannot see, and asks you
+about roots it cannot evaluate before it reports anything as dead. The output
+is findings, each with a proposed change and the check that verifies it. The
+skill does not edit files, commit, or open pull requests. The scan needs Node
+and git, and `gh` for the cross-repository search.
 
 ## Install with Claude Code
 

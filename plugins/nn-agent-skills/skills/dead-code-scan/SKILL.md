@@ -1,149 +1,195 @@
 ---
 name: dead-code-scan
 description: >-
-  Scan a JavaScript or TypeScript repository for dead exports. Finds exported
-  declarations whose name occurs nowhere else in the repository, and named
-  re-exports in a nested barrel that only the barrel and its source file name.
-  Checks each candidate against the package manifests (is it published) and
-  against other repositories (gh search code), and refuses to call a symbol
-  dead when it cannot show that nothing outside the repository uses it. Writes
-  a findings JSON file and a short ranked summary, and proposes deletions.
-  Edits only when asked. Use when asked to find unused exports, prune dead
-  code across a repository, or clean up orphaned barrel re-exports. To review
-  the dead code in one diff, use dead-code-code-review instead.
+  Scan a whole repository, in any programming language, for dead code:
+  declarations that nothing reaches from any root (entry points, public API,
+  tests, build targets, plugin and FFI exports, other repositories). A text
+  scan lists candidates, the model confirms each one from a language server,
+  text search, or reading, surveys what the scan cannot see, and reports
+  findings with a proposed change per finding. It never edits files, commits,
+  or opens pull requests. Use when asked to find unused exports or functions,
+  prune dead code across a repository, or check whether a symbol can be
+  removed. To review the dead code in one diff, use dead-code-code-review.
 ---
 
 # Dead Code Scan
 
-The scan reports exported symbols that nothing in the repository names again.
-It does not decide that a symbol is dead. It decides whether the repository
-can show that no outside code uses the symbol, and it reports only the symbols
-that pass. Every other candidate is recorded as a refusal with its reason.
+A symbol is dead only if it is unreachable from every root of the dependency
+graph. The scan lists candidates and roots. The model decides.
 
-`scripts/scan.mjs` does the scan. Run it from inside the target repository:
+**Contract.** The output is findings. Each finding has a concrete proposed
+change: what to change, where, and the check that would verify it, as text or a
+patch snippet in the report. This skill does not edit files, commit, push, or
+open or comment on pull requests or issues. The user, or a separate task,
+applies the change. The script writes only the findings file named by
+`--out`, and that file must be outside the repository under review.
 
-```bash
-node <skill-dir>/scripts/scan.mjs --out dead-code-scan.json
-```
+## Evidence sources
 
-Do not compute candidates by hand. `references/checks.md` lists the checks,
-what each can and cannot see, and the refusal rules.
+Use the strongest source available for each finding and record it in
+`evidence_source`:
+
+| Value | Source | Use for |
+| ----- | ------ | ------- |
+| `lsp` | Language server: find-references, workspace and document symbols, call hierarchy, diagnostics, code actions | References, definitions, callers, overrides, expression types, unused and exhaustiveness diagnostics |
+| `text` | `rg` or `git grep`, and the scan's token counts | When no language server exists. Names in comments and strings count as references. |
+| `read` | Reading the code and its callers | Everything the other two cannot show: dynamic access, generated code, conventions |
+
+Check at the start whether a language server is configured or startable for
+each language in the repository (an editor or agent LSP tool, or a server such
+as `gopls`, `rust-analyzer`, `pyright`, `jdtls`, `clangd`, `typescript-language-server`,
+`LanguageServer.jl`). Prefer it over text search for reference counts. Say in
+the report which languages had one. `references/languages.md` lists, per
+language, how to find roots and public API. Only the scan's declaration
+patterns are tested for TypeScript, Python, Go, Rust, Java, C, and Julia, and
+the root detection for a subset of them (see the top of that file). Everything
+else in that file is guidance.
 
 ## Requirements
 
-- Node 20 or later.
-- The `typescript` package, resolvable from the repository root. The script
-  exits with status 2 and a message when it is absent. Install the
-  repository's dependencies first.
-- A git repository. File discovery uses `git ls-files`, so ignored files
-  (`node_modules`, build output, nested worktrees) are not read.
-- Optional: `gh`, authenticated, for the cross-repository search.
-
-## Checks
-
-| Check | Fires on |
-| ----- | -------- |
-| `dead-export` | An exported top-level declaration whose identifier occurs once in the whole repository. |
-| `dead-barrel-reexport` | A named re-export in an `index` file where only that file and the module it re-exports from name the symbol. |
-
-Candidates come from the TypeScript syntactic parser. References are counted
-by tokenizing every source, config, data, and doc file. Names in comments and
-strings count as references, so the scan over-counts references and
-under-reports dead code.
-
-The scan does not cover:
-
-- Non-exported symbols. `noUnusedLocals` in tsconfig and the
-  `no-unused-vars` rules of ESLint report them. Check that the repository
-  enables one of them before relying on it.
-- Unreachable code inside a function, unused parameters, and files nothing
-  imports (the sum of the findings for the symbols in the file).
-- Unused dependencies in `package.json`, and dead tests.
+- Node 20 or later and a git repository. The scan needs no other package.
+- Optional: a language server for each language, and `gh` (authenticated) for
+  the cross-repository search.
 
 ## Procedure
 
-1. Read the repository's conventions before the run: workspace layout, which
-   packages are published, the `exports` maps and how `dist` is built from
-   `src` (the scan maps them by name only), tsconfig, ESLint config, and docs
-   next to code. Look for lists of symbols that are unreferenced on
-   purpose (coverage exemptions, deprecation tables, plugin registries) and
-   pass each name with `--keep`.
-2. Check machine load before a large scan.
-3. Run the script. Use `--scope <path>` to limit the declaration scan to a
-   subtree. The reference index always covers the whole repository.
-4. Read the JSON. Report the reported findings first, ranked by severity, then
-   the refusal counts by category. Keep the summary short.
-5. Propose the edit for each reported finding. Edit files only when the user
-   asks. Then make one deletion per commit, run the repository's type check,
-   lint, and tests, and keep the change only if they pass. Those checks do not
-   see dynamic lookup or consumers in other repositories, so also read the
-   finding's evidence before each deletion.
+1. **Find the roots.** Read what the project documents first (README,
+   CONTRIBUTING, manifests, build files, CI). Then list every root class that
+   applies, from `references/languages.md`:
+   - entry points: `main` functions, binaries, CLI and server entry files;
+   - the public API of libraries and packages;
+   - build targets and scripts, and CI steps that run files directly;
+   - test entry points and test setup files;
+   - build and tool configs that import code, plugin or loader registries;
+   - framework conventions: file-based routes, handlers, migrations, stories,
+     annotation or decorator wiring;
+   - FFI and export attributes (symbols named from other languages or binaries);
+   - dynamic loading: computed imports, reflection, string-keyed registries;
+   - non-code consumers: docs, templates, schemas, config naming symbols;
+   - other repositories and published consumers.
+2. **Run the scan** from the repository root:
 
-## Verdicts
+   ```bash
+   node <skill-dir>/scripts/scan.mjs --out "$(mktemp -d)/dead-code-scan.json"
+   ```
 
-Each candidate gets one verdict. Only `internal-only` can be reported.
+   Check machine load first on a large repository. `--scope <path>` limits the
+   declaration scan; the reference index always covers the whole repository.
+   `--help` lists the rest.
+3. **Settle the roots.** Read `roots.found` and `roots.unresolved` in the JSON.
+   If any of these hold, ask the user before reporting anything as dead, and do
+   not proceed on a guess:
+   - `roots.unresolved` is not empty;
+   - no manifest or build file exists, or the repository is a monorepo whose
+     consumers are unclear;
+   - a framework or convention in the repository is not in `roots.found` or
+     `roots.unresolved` (the scan knows a fixed list);
+   - the project documents no entry points and you cannot find them.
 
-| Verdict | Meaning |
-| ------- | ------- |
-| `internal-only` | The manifests do not publish the file, and no other repository of the searched GitHub owner names the symbol (or `--no-external` skipped that search). Repositories under other owners are not searched. |
-| `published` | The package has no `exports` map, or an entry point reaches the file by re-exports. Refused. |
-| `exported-with-hits` | `gh search code` found another repository naming the symbol. Refused. |
-| `unknown` | The surface or the search could not be determined. Refused. |
+   Ask, after reading the project's own docs, only about what stays open. One
+   message, in this form: "The scan could not evaluate these roots: `<ids and
+   detail>`. For each, which files or symbols does it load or call, or is it
+   not used here?" When the user answers, pass `--accept-root <id>:<path>`
+   (the root is evaluated for the files under that path) or `--accept-root <id>`
+   (all files) and rerun, or keep the candidate refused. `--accept-root
+   other-repositories` means `--no-external`. A candidate reachable only from a root the
+   scan did not evaluate is a refusal with category `unevaluated-root`.
+4. **Judgment pass.** For every script finding, candidate or refusal, read the
+   code around it and its callers, and confirm or overturn the script. Establish
+   from the language server, text search, or reading whether the symbol is
+   published (library API, exports map, public header, `pub`, capitalized Go
+   name, `__all__`), reachable from any root in step 1, and named in other
+   repositories. Set on each finding `judgment` to `confirmed` (for a refusal:
+   the refusal stands), `downgraded`, `dropped`, or `overturned` (a refusal that
+   is in fact dead), with `judgment_reason` and the `evidence_source` used. A script verdict alone
+   never justifies a proposed change.
+5. **Survey.** Read what the script cannot analyze, and report each defect as
+   a finding with `source: reviewer` (the script's own have `source: script`):
+   - files in `skipped_files`, and file types in `binary_file_types`;
+   - readable files in `unlisted_file_types` (languages the scan has no
+     declaration pattern for), and declarations the pattern misses (see below);
+   - dynamic access: string keys, reflection, plugin and config loading,
+     generated code;
+   - the neighborhood of each finding: siblings with the same shape (other
+     members of the same enum or set, other re-exports in the same file, other
+     files in the same directory).
+6. **Write the report.** Write the findings JSON (script and reviewer
+   findings together) and run
+   `node <skill-dir>/scripts/scan.mjs validate <findings.json>`. Then give a
+   short ranked summary: findings first, by severity, each with its
+   `source`, `evidence_source`, judgment, and proposed change; then refusal
+   counts by category; then the open roots, if any. Say which languages used
+   which evidence source.
 
-`unknown` is a refusal. It covers: no `package.json` owns the file, a
-manifest entry has no matching source file, an entry point re-exports
-through an alias or sibling package the scan cannot follow, or a `package.json`
-is not valid JSON (the published surface is then not known), `gh` is missing or not authenticated, the GitHub owner is unknown (pass
-`--org`), a search failed after retries or returned a full page of rows from
-this repository only, and the `--max-external` limit was reached.
+## What the scan sees and does not see
 
-Cross-repository search runs once per distinct symbol that the manifests leave
-internal. GitHub rate-limits code search, so the script waits `--pace-ms`
-between searches and retries a failed search twice. A large scan takes
-minutes. Pass `--no-external` only when the user states that the repository
-has no consumers elsewhere, and say so in the summary.
+| Check | The scan sees | The model must cover |
+| ----- | ------------- | -------------------- |
+| `dead-export` | A declaration line, in a supported language, whose name occurs once in all readable text files. | Names that occur more than once but are all dead (a cycle, a helper used only by a dead function, a use only in a comment or string). Declarations with no keyword on the line (C functions, methods, Java methods, Go `type (` blocks, Julia short functions). Languages not in the table. |
+| `dead-reexport` | A re-export line whose name occurs in exactly two files, two times. | Whether the second file declares the name. Re-exports the line pattern misses. Glob re-exports, which carry every name. |
+| Visibility | A hint from the declaration line (`exported`, `public-by-convention`, `unknown`). | Whether the package publishes the file: manifests, export maps, public headers, module systems, build visibility. |
+| Roots | Manifests, `main` functions, files named in build and CI files, tests, tool configs, docs and data read by name, framework paths from a fixed list, directories that usually load by path, computed loads, FFI attributes. | Everything else in step 1, including frameworks outside the list and how a build maps output to source. |
+| Other repositories | `gh search code` hits for the symbol name under one GitHub owner. | Consumers under other owners, binary consumers, and consumers that import a renamed alias. |
+| Binary and large files | Reports them. Files over the size limit block every candidate (`unread-files`) until read or accepted. | Reading them if they can name symbols. Binary files are not tokenized. |
+
+The scan reads every text file up to `--max-file-bytes`. Symlinks are skipped.
+A name in a comment or a string counts as a reference, so the scan reports
+less than the full dead set. A name used only in a binary file or in a file the
+scan does not recognize as text is not counted.
 
 ## Refusals
 
-A candidate with verdict `internal-only` is still refused when:
+The scan refuses a candidate, with a category, when:
 
-- The caller listed the name with `--keep`.
-- The name starts with `_`.
-- The declaration is not a plain value, so deleting it may remove a side
-  effect. This covers a call or `new` anywhere in the initializer, a class with
-  decorators or static code, an enum with computed members, and a `const`
-  statement with several declarators where any initializer is not plain.
-- The file is under a test, fixture, sample, or example directory.
-- The directory holds a `README.md`, `DESIGN.md`, or `ARCHITECTURE.md`. A
-  symbol that completes a documented set is not dead because nothing uses it
-  yet.
+| Category | Rule |
+| -------- | ---- |
+| `kept-by-caller` | The name is in `--keep`. Pass names of deliberately unreferenced symbols: coverage exemptions, deprecation tables, registries. |
+| `underscore-name` | A leading `_` marks a name as intentionally unreferenced. |
+| `side-effect-initializer` | The declaration line calls code or declares several names, so removal may remove an effect. |
+| `test-support` | The file is under a fixture, sample, mock, or example directory. |
+| `doc-in-directory` | The directory holds a README, DESIGN, or ARCHITECTURE file. A symbol that completes a documented set is not dead because nothing uses it yet. |
+| `unevaluated-root` | A root the scan could not evaluate may load the symbol, including `manifest` (no manifest or build file above the file) and `unread-files` (files over the size limit). |
+| `exported-with-hits` | Another repository names the symbol. |
+| `unknown` | The cross-repository search could not run or failed (no `gh`, not authenticated, unknown owner, rate limit, a full page of own-repository hits, or the `--max-external` limit). |
 
-Default exports are never candidates. Names reached only by dynamic dispatch
-(reflection, DI containers, string-keyed registries) appear in the reference
-index when the string occurs in a scanned file. Search for the dispatch
-mechanism before acting on a finding in a repository that has one.
+`--no-external` skips the cross-repository search. Use it only when the user
+states that the repository has no consumers elsewhere, and say so in the
+report. Without `gh` and without `--no-external`, nothing is a candidate: say
+that outright instead of calling the repository clean. The search waits
+`--pace-ms` between calls, because GitHub rate-limits code search.
+
+A refusal is a prompt to read the code, not a verdict. When the judgment pass
+overturns one, say why in `judgment_reason`.
 
 ## Output
 
-The JSON document has `tool`, `scope`, `generated_at`, `counts`
-(`candidates`, `reported`, `refused`), and `findings`. Each finding has:
+The scan JSON has `tool`, `scope`, `generated_at`, `counts`, `roots`,
+`skipped_files`, `binary_file_types`, `unlisted_file_types`, and `findings`.
+`roots` has `found` and `unresolved`, each a list of `{id, kind, detail}`.
 
-| Field | Value |
-| ----- | ----- |
+| Finding field | Value |
+| ------------- | ----- |
 | `id` | `dc-N` |
-| `severity` | `low` for `dead-export`, `nit` for `dead-barrel-reexport`, `question` for a refusal |
-| `check`, `file`, `line`, `symbol` | The candidate |
-| `verdict` | One of the four verdicts |
-| `evidence` | The verdict, the reason, the files naming the symbol, and any hits in other repositories |
-| `proposal` | The edit, or `None` for a refusal |
-| `refused`, `category`, `reason` | Present for refusals. `category` is the verdict or the local rule. |
+| `source` | `script` or `reviewer` |
+| `evidence_source` | `lsp`, `text`, or `read` |
+| `severity` | `low` for `dead-export`, `nit` for `dead-reexport`, `question` for a refusal. The model may change it. |
+| `check`, `file`, `line`, `symbol`, `language` | The candidate |
+| `visibility_hint`, `external` | The scan's hint, and `none`, `hits`, `unknown`, `skipped`, or `not-run` |
+| `evidence` | What was checked and found |
+| `proposal` | The proposed change: where, what, and the check that verifies it |
+| `judgment`, `judgment_reason` | The model's decision on a script finding |
+| `refused`, `category`, `reason` | Present for refusals |
 
-The script writes a summary of the same data to stderr. Exit status: 0 when no
-finding is reportable (refusals alone exit 0), 1 when at least one is, 2 when
-the scan could not run.
+A `reviewer` finding has the same fields, with `source: reviewer` and no scan
+verdict fields. Exit status of the scan: 0 when it found no candidates, 1
+when there are candidates or refusals for the judgment pass, 2 when it could
+not run. `validate` exits 2 and lists the problems when a finding lacks a
+source, an evidence source, a proposal, or (for a script finding) a judgment
+with its reason.
 
 ## Final check
 
-Each reported symbol needs a visibility verdict and a reason for it. A scan
-that ran without `gh` and without `--no-external` reports nothing. Say that
-outright in the summary instead of calling the repository clean.
+Each reported finding needs a root story (which roots were considered and why
+none reaches the symbol), an evidence source, and a proposed change with its
+verification. Do not report a symbol as dead while a root that could reach it
+is unevaluated.

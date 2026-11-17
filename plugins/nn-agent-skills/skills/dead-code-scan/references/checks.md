@@ -1,143 +1,163 @@
 # Check catalog
 
-One entry per check in `scripts/scan.mjs`, with the rule it applies, what it can
-see, and why it stops where it does. A deletion tool that fires on a guess asks
-for working code to be deleted, so each bound below errs toward refusal.
+One entry per check in `scripts/scan.mjs`, with the rule it applies, what it
+sees, and where the model must look instead. A tool that proposes deletions and
+fires on a guess asks for working code to be deleted, so each bound errs toward
+refusal. The scan is text based and has no language parser.
+
+## Reference index
+
+Every identifier token in every text file git lists (tracked, or untracked and
+not ignored), in any language: `[\p{L}_$][\p{L}\p{N}_$]*` over the file text.
+
+- Comments and strings count as references. The scan over-counts references and
+  under-reports dead code.
+- Docs, templates, schemas, and config files count, because they can name a
+  symbol.
+- Ignored paths (dependencies, build output, nested worktrees) are not read.
+  Stale copies of the repository would make every symbol look live.
+- Symlinks are skipped, and `--out` may not be a symlink or sit inside the
+  repository, so the scan cannot write through a link into the code under review.
+  Binary files (a NUL byte in the first 8000 bytes) are
+  counted by extension in `binary_file_types`. Files over `--max-file-bytes` are
+  listed in `skipped_files`. A file the scan cannot read stops the run, because
+  a missing file lowers counts.
+- A token is the name only. A qualified use (`pkg.Name`), a renamed import, and
+  a name built at run time are not tied to a declaration. A name shared by two
+  unrelated symbols counts as used for both.
 
 ## `dead-export`
 
-An exported top-level declaration whose name occurs exactly once in the
-repository, which is its own declaration.
+A declaration line whose name occurs exactly once in the index, which is its own
+declaration.
 
-- Declarations: functions, classes, interfaces, type aliases, enums, and
-  `const`/`let`/`var` with identifier names. `declare` statements and default
-  exports are skipped: a default export is imported under any name.
-- Method: the TypeScript syntactic parser reads the top-level statements. A
-  regular expression over `export` lines misreads overload sets and
-  multi-declarator variable statements.
-- Bound: the whole repository, not only other files. A name used in its own
-  file occurs twice and is not a candidate. An interface named by a union in the
-  same file is the case this rule exists for: the union is what leaves the
-  package, and deleting a member deletes part of a live type. Counting only
-  references outside the declaring file would report those members and
-  same-file helpers.
-- Bound: identifiers are counted by a tokenizer, so a name in a comment or a
-  string counts as a reference. This hides dead symbols and never proposes a live
-  one.
-- Bound: the reference index reads `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`,
-  `.mjs`, `.cjs`, `.json`, `.md`, `.mdx`, `.yml`, `.yaml`, `.html`, `.vue`,
-  `.svelte`, `.hbs`, `.toml`, `.txt`, `.graphql`, `.proto`, and `.sh` files that
-  git lists as tracked or untracked and not ignored. Ignored paths (dependencies,
-  build output, nested worktrees) stay out, because stale copies of the
-  repository would make every symbol look live. Symlinks are skipped. A file the
-  scan cannot read stops the run, because a missing file lowers counts.
-- Bound: declaration files exclude `.d.ts`, `*.test.*`, `*.spec.*`,
-  `__tests__`, generated directories (`node_modules`, `dist`, `build`, `out`,
-  `coverage`, `.next`), minified bundles, and files over 2 MB. Excluding a
-  declaration file removes candidates and never adds one.
+- Declaration pattern: optional modifiers, then one of `function`, `def`, `fn`,
+  `func`, `fun`, `class`, `struct`, `interface`, `trait`, `enum`, `type`,
+  `typedef`, `typealias`, `const`, `let`, `var`, `val`, `object`, `module`,
+  `macro`, `mutable struct`, `abstract type`, `primitive type`, `record`,
+  `union`, `protocol`, `extension`, then the name. A Go receiver is skipped.
+- Out of reach: declarations with no keyword on the line (C and C++ functions,
+  Java methods, Go declarations inside a `type (` block, Julia short-form
+  functions) and declarations that continue from a previous line. The model
+  reads for these.
+- Whole repository, not only other files: a name used in its own file occurs
+  twice and is not a candidate. An interface named by a union in the same file
+  is the case this rule exists for, because the union is what leaves the package.
+- Visibility hint from the line alone, by language of the file extension:
 
-## `dead-barrel-reexport`
+  | Language | `exported` | `private` (not a candidate) |
+  | -------- | ---------- | --------------------------- |
+  | TypeScript, JavaScript | `export` modifier | no `export` |
+  | Rust | `pub` | no `pub` |
+  | Go | column 0, capitalized name | otherwise |
+  | Python | `public-by-convention`: column 0, no leading `_` | otherwise |
+  | Java, Kotlin, Scala, C#, Swift, Dart | `public`, `open`, `protected`, `internal`; `unknown` with no modifier | `private` |
+  | C, C++ | column 0 in a header | other files |
+  | Others | `unknown` at column 0 | indented |
 
-A named re-export in a file named `index.*`, where the only two files naming the
-symbol are the barrel and the module the re-export resolves to.
+  The hint is not a visibility verdict. A package can publish less (an exports
+  map, a build visibility rule) or more (a re-export) than the line says.
+  Private declarations are not candidates: the compiler or a linter reports
+  unused ones in most languages (`noUnusedLocals`, `unused` lints, `go vet`,
+  `-Wunused`). Check that the project enables one.
+- Default exports are not candidates: the importer picks the name.
 
-- Why it is separate: such a name occurs twice, so `dead-export` never sees it.
-  The fix differs and is smaller: delete the re-export and keep the declaration.
-- Bound: the other file must be the module the specifier resolves to. A consumer
-  that imports the name through the barrel adds a third occurrence, and a
-  different second file means someone else names it.
-- Bound: named re-exports without an alias. `export * from` carries every name
-  and says nothing about which of them anyone wants.
-- A barrel that a published entry point reaches is a candidate with verdict
-  `published`, and is refused.
+## `dead-reexport`
 
-## Visibility verdicts
+A re-export line (`export {` / `export *` / `export type {`, `pub use`,
+`from M import`, `__all__`, `module.exports`) naming a token that occurs in
+exactly two files, two times in all: the re-exporting file and one other.
 
-Every candidate gets a verdict from the package manifests, and then from a
-cross-repository search when the manifests leave it internal.
+- It is separate from `dead-export` because the name occurs twice there. The
+  proposed change is smaller: delete the re-export and keep the declaration.
+- The scan does not check that the other file declares the name. The model does.
+- Glob re-exports (`export *`, `pub use x::*`, `from x import *`) carry every
+  name and say nothing about which of them anyone wants.
 
-Manifest rules, per owning package (nearest `package.json`):
+## Roots
 
-| Package | Verdict for a file in it |
-| ------- | ------------------------ |
-| No `package.json` above the file | `unknown` |
-| `"private": true` | `internal-only` |
-| No `exports` map | `published`: any file can be imported by path |
-| Has an `exports` map | `published` when the file is an entry point or an entry point reaches it through re-exports; `unknown` when the entry points are not fully known (below); otherwise `internal-only` |
+A root is a place code is entered from. The scan lists those it recognizes in
+`roots.found` and `roots.unresolved`.
 
-Entry points come from `main`, `module`, `types`, `typings`, `bin`, and every
-string in `exports`. A path under `dist`, `lib`, `build`, `out`, `esm`, `cjs`,
-or `types` also matches the same path under `src`, so `./dist/index.js` finds
-`src/index.ts`. A `*` in an `exports` target matches any path segment run.
-Reachability follows `export ... from` and `export { x }` of an imported
-binding. It follows no other construct, so a published type that mentions an
-internal type is protected only by the occurrence count.
+Found (the text of these is in the reference index, so every name they use
+counts as a reference):
 
-The entry points are not fully known, and every non-published file of the
-package gets `unknown`, when:
+| Id | Source |
+| -- | ------ |
+| `manifests` | Package and build manifests (`package.json`, `Cargo.toml`, `go.mod`, `pyproject.toml`, `pom.xml`, `build.gradle*`, `Project.toml`, `Package.swift`, `*.csproj`, and others) |
+| `package-entry` | Strings under `main`, `module`, `types`, `bin`, `exports` in `package.json`. Other manifest formats are listed under `manifests` and read by the model. |
+| `main-entry` | Lines that look like a `main` function, an `if __name__ == "__main__"` guard, or a script shebang |
+| `build-and-ci-references` | Source and shell files whose path appears in a manifest, Makefile, script, or CI file |
+| `tests` | Test files by name and directory convention, and test setup files |
+| `tool-configs` | Files such as `*.config.js`, `conftest.py`, `build.rs` |
+| `docs-and-data` | Every other readable text file |
+| `other-repositories` | The cross-repository search, or the caller's assertion that there are none |
 
-- A path listed in the manifest (other than the npm defaults) matches no source
-  file, for example `dist/main.js` built from `src/entry.ts`. The `dist` to `src`
-  mapping is a name heuristic, and a build step can break it.
-- A reachable file re-exports through a relative path that does not resolve, or
-  through a non-relative specifier that is not a Node built-in or a declared
-  dependency of the owning or an enclosing package. That covers path aliases and
-  packages of this repository. The scan does not read tsconfig `paths`, so it
-  cannot follow these.
+Unresolved (cannot be evaluated by counting names, so each blocks the candidates
+it may load):
 
-The `dist` to `src` mapping matches by name only. A build that renames the entry
-(`dist/index.js` from `src/entry.ts`) while another `src/index.ts` exists
-defeats it, and nothing in the manifest shows that. Confirm the mapping against
-the build configuration before acting on a finding.
+| Id | Blocks | Detected by |
+| -- | ------ | ----------- |
+| `framework:<name>` | Files at that framework's load paths | A manifest names the framework (Next, Nuxt, Remix, SvelteKit, Astro, Gatsby, Storybook, serverless, Django, Rails, Spring) and files match its paths |
+| `convention-directory:<dir>` | Files under `migrations`, `seeds`, `plugins`, `handlers`, `commands`, `routes`, `api`, or `middleware` | The directory exists |
+| `dynamic-loading` | Files in the same package directory as the loader | Computed `import`/`require`, `import.meta.glob`, `importlib`, `Class.forName`, `ServiceLoader`, `plugin.Open`, `MethodByName`, `dlopen`, `LoadLibrary`, Julia `include` with a computed path, `const_get` |
+| `ffi-exports` | The file with the attribute | `#[no_mangle]`, `extern "C"`, `//export`, `@JvmStatic`, `JNIEXPORT`, `dllexport`, `visibility` attributes, `@ccallable`, `#[pyfunction]`, `#[wasm_bindgen]` |
+| `manifest` | Files with no manifest or build file (`Makefile`, `CMakeLists.txt`, `BUILD`, `justfile`, `meson.build`) in their directory or an ancestor | A source file the nearest manifest does not own |
+| `unread-files` | Every candidate | A file over `--max-file-bytes`, so its references are not counted |
+| `other-repositories` | Nothing by itself; every candidate is `unknown` | `gh` missing, not authenticated, or the owner unknown |
 
-A `package.json` that is not valid JSON gives `unknown` to every file under it,
-so those files do not inherit the verdict of an enclosing package.
+`--accept-root <id>` moves an unresolved root to found, with the detail marked
+as accepted by the caller. `--accept-root <id>:<path>` lifts the block only for
+files under `<path>` and leaves the root unresolved for the rest. Use it only
+after the user said what the root loads. `--accept-root other-repositories`
+means `--no-external`.
 
-Search rules, for `internal-only` candidates, once per distinct name:
+The lists are fixed. A framework, build system, or loader outside them is
+invisible to the scan, so the model reads for it (step 1 and 3 in SKILL.md).
+Package directories come from the nearest manifest. Mapping build output to
+source (for example `dist/` to `src/`) is not attempted; the model reads the
+build configuration when it matters.
+
+## Cross-repository search
+
+For each distinct candidate name that no local rule refused:
 
 - `gh search code <name> --owner <owner> --json repository,path --limit 100`.
   The owner is `--org` or the owner of the `origin` remote. Hits in the current
   repository are ignored. Any other hit gives `exported-with-hits`.
-- Code search matches tokens, so a hit can be a different symbol with the same
-  name. That over-counts, which refuses more and never less.
-- A result of 100 rows is capped. The finding says so. A capped result whose
-  rows all belong to the current repository gives `unknown`, because other
-  repositories can lie beyond the cap.
 - Only repositories of that one owner are searched. A consumer under another
-  owner is invisible, and the finding evidence names the owner.
-- A failure (no `gh`, not authenticated, unknown owner, rate limit after two
-  retries, the `--max-external` limit) gives `unknown`, which is a refusal. A
-  failed search never reads as "no hits".
-- `--no-external` skips the search. The caller asserts that no other repository
-  consumes this one, and the finding evidence says the search was skipped.
-
-A `published` candidate is not searched. The manifest evidence already refuses
-it, and each search costs rate limit.
+  owner is invisible, and `external: none` says only that the owner has none.
+- Code search matches tokens, so a hit can be a different symbol with the same
+  name. That refuses more and never less.
+- A result of 100 rows is capped. A capped result whose rows all belong to the
+  current repository gives `unknown`, because other repositories can lie beyond
+  the cap.
+- A failure (no `gh`, not authenticated, unknown owner, a rate limit after two
+  retries, the `--max-external` limit) gives `unknown`. A failed search never
+  reads as "no hits".
 
 ## Local refusals
 
-Applied to `internal-only` candidates, in this order. The first match is the
-recorded category.
+Applied before the search, in this order. The first match is the recorded
+category. See SKILL.md for the table. Two are text heuristics:
 
-| Category | Rule |
-| -------- | ---- |
-| `kept-by-caller` | The name is in `--keep`. The caller read a list of deliberately unreferenced symbols (coverage exemptions, deprecation tables) that the script cannot discover. |
-| `underscore-name` | A leading `_` marks a name as intentionally unreferenced. ESLint's `varsIgnorePattern` commonly encodes the same convention. |
-| `side-effect-initializer` | Removing the statement may remove an effect. The initializer is not a function, literal, or an array, object, `as`, `satisfies` or parenthesized expression made only of those (no call, `new`, spread, computed key, or getter), or the class has decorators or static members, or an enum member is not a literal, or a sibling declarator in the same statement fails the test. |
-| `test-support` | The path has a `test`, `tests`, `__tests__`, `__mocks__`, `fixtures`, `samples`, `examples`, or `e2e` segment. A test-pruning tool owns it. |
-| `doc-in-directory` | The directory holds `README.md`, `DESIGN.md`, or `ARCHITECTURE.md`. A symbol that completes a documented set is not dead because nothing uses it yet. |
+- `side-effect-initializer` fires when a `const`, `let`, `var`, `val`, or
+  `static` line has a call on its right-hand side (after removing arrow and
+  function expressions) or declares several names on one line. It does not see
+  effects in languages where a plain declaration runs code (static initializers,
+  decorators, annotations, macros, `init` functions, constructors of globals).
+  The model reads those.
+- `doc-in-directory` and `test-support` use directory names only.
 
 ## Not checked
 
-- **Non-exported unused declarations.** `noUnusedLocals` (tsconfig) and
-  `@typescript-eslint/no-unused-vars` fail the build on them in repositories that
-  enable either. A second implementation finds the same symbols one CI step later.
-- **Unreachable code inside a function, unused parameters.** These need
-  control-flow analysis.
-- **A file nothing imports.** It is the sum of this scan's findings over the
-  symbols in the file. A separate report would count each twice.
-- **Dead tests and fixtures only a dead test uses.**
-- **Unused dependencies in `package.json`.** Another signal with another
-  consumer question.
-- **Dynamic dispatch by computed name.** Reflection, DI containers, and routers
-  that build a name at run time leave no token to count.
+- Non-exported unused declarations: compilers and linters own them.
+- Unreachable code inside a function and unused parameters: these need
+  control-flow analysis, which a language server or compiler gives.
+- A file nothing imports: the sum of this scan's findings for the symbols in the
+  file. A separate report would count each twice.
+- Dead tests, and fixtures only a dead test uses.
+- Unused dependencies in a manifest: another signal with another consumer
+  question.
+- Dead cycles: two symbols that reference only each other occur twice or more.
+  The model finds these with call hierarchy or find-references.
