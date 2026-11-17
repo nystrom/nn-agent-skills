@@ -137,6 +137,16 @@ are characterization tests, written to a separate `*.generated` test file; an
 optional review pass on a stronger model judges whether each pinned behavior is
 correct.
 
+### unused-abstraction-scan
+
+Finds TypeScript indirection that no production code reads: a field whose doc
+comment says it has no effect, an options type with no fields, and an ignored
+options parameter whose type nothing reads. A bundled script (Node 20+, no
+packages) finds the candidates, counts readers, and checks whether the symbol
+leaves its package, with `gh search code` for published packages. It reports
+findings and refusals with evidence, and edits only when asked. A symbol it
+cannot prove internal is a refusal.
+
 ## Install with Claude Code
 
 Add this marketplace, then install the plugin:
@@ -171,7 +181,7 @@ Invoke the skills as `$run-review-lenses`, `$adversarial-review`,
 `$dead-code-code-review`, `$ai-slop-code-review`, `$numerical-code-review`,
 `$codex-code-review` (which skips itself inside Codex),
 `$interactive-code-review`,
-`$ui-code-review`, `$concolic-test-generation`, or describe a matching task
+`$ui-code-review`, `$concolic-test-generation`, `$unused-abstraction-scan`, or describe a matching task
 and let Codex select the skill.
 
 ## Install with Antigravity
