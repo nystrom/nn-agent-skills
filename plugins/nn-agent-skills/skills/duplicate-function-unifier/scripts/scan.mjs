@@ -30,6 +30,15 @@ Options:
   --scope <path>          Keep groups with a member under this path (relative
                           to the root). A group that crosses the scope
                           boundary is kept. Repeatable.
+  --diff-base <ref>       Diff scope: keep groups with a copy in a file added,
+                          copied, modified, or renamed between the merge base
+                          with <ref> and HEAD. The other copies, consumers, and
+                          hosts are still searched in the whole tree. Combines
+                          with --scope as an intersection.
+  --include-working-tree  With --diff-base, also count uncommitted and
+                          untracked files.
+  --format <native|wire>  native: the findings document (default). wire: a
+                          JSON array of review-lens findings, one per group.
   --min-lines <n>         Smallest body to compare, in logical lines. Default 2.
   --max-file-bytes <n>    Skip files larger than this. Default 1048576.
   --gh-owner <org>        Also search this GitHub owner for callers of exported
@@ -48,7 +57,7 @@ const END = "end";
 const C_STYLE = { line: ["//"], block: [["/*", "*/"]] };
 
 /**
- * Per-language lexing and boundary rules. \`verified\` is true only for
+ * Per-language lexing and boundary rules. `verified` is true only for
  * languages that scan.test.mjs exercises; the others use the same family rule
  * and their results are leads.
  */
@@ -356,6 +365,9 @@ function parseArgs(argv) {
     maxFileBytes: 1024 * 1024,
     ghOwner: undefined,
     out: undefined,
+    diffBase: undefined,
+    includeWorkingTree: false,
+    format: "native",
   };
   const needValue = (i, flag) => {
     if (argv[i + 1] === undefined) {
@@ -394,6 +406,19 @@ function parseArgs(argv) {
         break;
       case "--out":
         opts.out = resolve(needValue(i, "--out"));
+        i += 1;
+        break;
+      case "--diff-base":
+        opts.diffBase = needValue(i, "--diff-base");
+        i += 1;
+        break;
+      case "--include-working-tree":
+        opts.includeWorkingTree = true;
+        break;
+      case "--format":
+        opts.format = needValue(i, "--format");
+        ["native", "wire"].includes(opts.format) ||
+          die(`--format must be native or wire\n${USAGE}`);
         i += 1;
         break;
       case "-h":
@@ -1395,6 +1420,82 @@ function consumers(root, group, opts) {
   };
 }
 
+const WIRE_SOURCE = "duplicate-function-unifier";
+const WIRE_REFUSAL_LIMIT = 5;
+// Refusals that ask a person to confirm something. A group refused because a
+// larger group covers it, or because it is a dispatch family, needs no look.
+const WORTH_A_LOOK = /^(?:consumer check is unknown|no home for|a comment on a member)/;
+
+/**
+ * One review-lens finding per group, anchored at the copy inside the scope.
+ * The script's severities map as they are (`medium`, `low`); a reviewer can
+ * raise one. A refusal worth a look becomes a `low` finding that says what to
+ * confirm, capped so refusals do not crowd out findings.
+ */
+function toWire(findings) {
+  const wire = [];
+  let refusals = 0;
+  for (const f of findings) {
+    if (f.refused && (!WORTH_A_LOOK.test(f.reason) || refusals >= WIRE_REFUSAL_LIMIT)) {
+      continue;
+    }
+    f.refused && (refusals += 1);
+    const others = f.copies
+      .filter((c) => !(c.path === f.file && c.line === f.line))
+      .map((c) => `${c.path}:${c.line} ${c.name}`);
+    const names = [...new Set(f.copies.map((c) => c.name))].join(", ");
+    wire.push({
+      source: WIRE_SOURCE,
+      path: f.file,
+      line: f.line,
+      severity: f.severity,
+      title: f.refused
+        ? `Possible duplicate of ${names}: confirm before merging`
+        : `Duplicate function ${names}: ${f.members} copies`,
+      body: `${f.signal}. Other copies: ${others.join(", ")}. ${f.evidence}. Found by: source script, evidence text.`,
+      suggested_fix: f.refused ? `Confirm before merging: ${f.reason}` : f.proposal,
+      evidence: f.refused
+        ? "Inferred: the script refused this group (text); read the copies and decide whether the refusal holds."
+        : "Verified: the bodies are token-identical (text). Inferred: a merge is safe; confirm by reading each copy and its callers (read) or with language server references (lsp).",
+    });
+  }
+  return wire;
+}
+
+/**
+ * Files the change set adds, copies, modifies, or renames: the three-dot diff
+ * against the base, plus (when asked) uncommitted and untracked files.
+ */
+function changedFiles(root, opts) {
+  const names = (args) =>
+    gitOutput(root, args)
+      .split("\0")
+      .filter((f) => f.length > 0);
+  try {
+    const base = gitOutput(root, ["merge-base", opts.diffBase, "HEAD"]).trim();
+    // The working-tree diff is already net against the merge base, so it
+    // replaces the committed diff; a file restored to its base is not changed.
+    const files = new Set(
+      names([
+        "diff",
+        "--relative",
+        "--name-only",
+        "--diff-filter=ACMR",
+        "-z",
+        ...(opts.includeWorkingTree ? [base] : [`${opts.diffBase}...HEAD`]),
+      ])
+    );
+    if (opts.includeWorkingTree) {
+      for (const f of names(["ls-files", "--others", "--exclude-standard", "-z"])) {
+        files.add(f);
+      }
+    }
+    return files;
+  } catch {
+    return die(`cannot diff against ${opts.diffBase}: is it a git ref in this repository?`);
+  }
+}
+
 /** Whether every member of `group` nests inside a member of `outer`. */
 function nestedIn(group, outer) {
   return group.every((member) =>
@@ -1458,8 +1559,12 @@ function main() {
   // Scopes are resolved against the root so `.`, `./x`, and absolute paths
   // work. A scope outside the root matches nothing.
   const scopes = opts.scopes.map((s) => relative(root, resolve(root, s)));
-  const inScope = (path) =>
+  const inPaths = (path) =>
     scopes.length === 0 || scopes.some((s) => s === "" || path === s || path.startsWith(`${s}/`));
+  // Diff scope narrows which groups are candidates. Evidence for a candidate
+  // (the other copies, consumers, hosts) always comes from the whole tree.
+  const diffFiles = opts.diffBase === undefined ? undefined : changedFiles(root, opts);
+  const inScope = (path) => inPaths(path) && (diffFiles === undefined || diffFiles.has(path));
   const packageOf = makePackageResolver(root, files);
   const fileKey = (group) => compact(group.map((m) => m.file)).join("|");
   const idOf = (index) =>
@@ -1546,12 +1651,16 @@ function main() {
             ? `keep one ${names[0]} in ${home.host}, and give it a parameter for whatever each copy closes over; delete the rest. Check the layering configs and docs named in the evidence before choosing the file`
             : `keep one of ${names.join(", ")} and call it from the other sites, generalizing the parameter or the type rather than copying the body again`;
 
+    // The finding is anchored at a copy inside the scope, so a diff review
+    // points at the code the change touched.
+    const anchor = group.find((m) => inScope(m.file));
     findings.push({
       id: idOf(index),
       source: "script",
       evidence_source: ["text"],
-      file: group[0].file,
-      line: group[0].line,
+      file: anchor.file,
+      line: anchor.line,
+      copies: group.map((m) => ({ path: m.file, line: m.line, name: m.name })),
       ...(names.length === 1 ? { symbol: names[0] } : {}),
       language: LANGS[group[0].lang].name,
       severity:
@@ -1584,7 +1693,16 @@ function main() {
   const document = {
     tool: "duplicate-function-unifier",
     root,
-    scope: scopes.length === 0 ? "whole repository" : opts.scopes.join(", "),
+    scope_mode:
+      opts.diffBase !== undefined ? "diff" : scopes.length > 0 ? "paths" : "repo",
+    scope: [
+      opts.diffBase !== undefined
+        ? `files changed since ${opts.diffBase}${opts.includeWorkingTree ? " plus the working tree" : ""}`
+        : null,
+      scopes.length > 0 ? opts.scopes.join(", ") : null,
+    ]
+      .filter((s) => s !== null)
+      .join("; ") || "whole repository",
     generated_at: new Date().toISOString(),
     files_scanned: scanned,
     languages,
@@ -1599,14 +1717,22 @@ function main() {
     findings,
   };
 
-  const json = `${JSON.stringify(document, null, 2)}\n`;
+  const wire = opts.format === "wire" ? toWire(findings) : undefined;
+  const headline = findings.some((f) => !f.refused) ? "needs-attention" : "approve";
+  const json = `${JSON.stringify(wire ?? document, null, 2)}\n`;
   if (opts.out === undefined) {
     process.stdout.write(json);
+    wire !== undefined && process.stderr.write(`${headline}\n`);
   } else {
     try {
       writeFileSync(opts.out, json);
     } catch (error) {
       die(`cannot write ${opts.out}: ${error.message}`);
+    }
+    if (wire !== undefined) {
+      process.stdout.write(`${headline}\n${wire.length} finding(s) written to ${opts.out}\n`);
+      process.exitCode = findings.length > 0 ? 1 : 0;
+      return;
     }
     const rank = { medium: 0, low: 1 };
     const lines = [

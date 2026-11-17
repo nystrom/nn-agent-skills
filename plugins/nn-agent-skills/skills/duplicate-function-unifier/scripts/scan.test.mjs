@@ -58,6 +58,140 @@ describe("scan.mjs", () => {
   });
 });
 
+describe("scan.mjs diff scope and wire format", () => {
+  let root;
+  const git = (...args) =>
+    spawnSync(
+      "git",
+      ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args],
+      { cwd: root, encoding: "utf8" }
+    );
+  const fn = (name, k) =>
+    `def ${name}(x):\n    y = x + ${k}\n    if y:\n        y += 2\n    return y\n`;
+
+  before(() => {
+    root = mkdtempSync(join(tmpdir(), "dfu-diff-"));
+    git("init", "-q", "-b", "main");
+    // Two old copies of one body, and one old unrelated copy pair.
+    write(root, "old/a.py", fn("_old", 1));
+    write(root, "old/b.py", fn("_old", 1));
+    write(root, "old/c.py", fn("_same", 9));
+    git("add", "-A");
+    git("commit", "-q", "-m", "base");
+    git("checkout", "-q", "-b", "feature");
+    // The change adds a third copy of _same, and touches nothing else.
+    write(root, "new/d.py", fn("_same", 9));
+    git("add", "-A");
+    git("commit", "-q", "-m", "feature");
+    // An uncommitted copy of _old.
+    write(root, "wip/e.py", fn("_old", 1));
+  });
+
+  after(() => rmSync(root, { recursive: true, force: true }));
+
+  test("diff scope keeps only groups with a copy in the change", () => {
+    const run = scan(root, "--diff-base", "main");
+    assert.equal(run.json.scope_mode, "diff");
+    assert.deepEqual(run.json.findings.map((f) => f.symbol), ["_same"]);
+    const [finding] = run.json.findings;
+    assert.equal(finding.file, "new/d.py");
+    assert.equal(finding.copies.length, 2);
+    assert.match(finding.signal, /old\/c\.py:1/);
+  });
+
+  test("diff scope computes evidence from the whole tree", () => {
+    const [finding] = scan(root, "--diff-base", "main").json.findings;
+    assert.match(finding.evidence, /one package/);
+    assert.equal(finding.refused, false);
+  });
+
+  test("--include-working-tree adds uncommitted files", () => {
+    const run = scan(root, "--diff-base", "main", "--include-working-tree");
+    assert.deepEqual(run.json.findings.map((f) => f.symbol).sort(), ["_old", "_same"]);
+    const old = run.json.findings.find((f) => f.symbol === "_old");
+    assert.equal(old.file, "wip/e.py");
+    assert.equal(old.copies.length, 3);
+  });
+
+  test("--scope intersects with the diff", () => {
+    const run = scan(root, "--diff-base", "main", "--include-working-tree", "--scope", "wip");
+    assert.deepEqual(run.json.findings.map((f) => f.symbol), ["_old"]);
+  });
+
+  test("a bad base exits 2", () => {
+    assert.equal(scan(root, "--diff-base", "no-such-ref").status, 2);
+  });
+
+  test("repo scope reports every group", () => {
+    const run = scan(root);
+    assert.equal(run.json.scope_mode, "repo");
+    assert.deepEqual(run.json.findings.map((f) => f.symbol).sort(), ["_old", "_same"]);
+  });
+
+  test("--format wire prints review-lens findings", () => {
+    const run = spawnSync(
+      process.execPath,
+      [SCAN, "--root", root, "--diff-base", "main", "--format", "wire"],
+      { cwd: root, encoding: "utf8" }
+    );
+    const wire = JSON.parse(run.stdout);
+    assert.equal(wire.length, 1);
+    assert.deepEqual(Object.keys(wire[0]).sort(), [
+      "body",
+      "evidence",
+      "line",
+      "path",
+      "severity",
+      "source",
+      "suggested_fix",
+      "title",
+    ]);
+    assert.equal(wire[0].source, "duplicate-function-unifier");
+    assert.equal(wire[0].path, "new/d.py");
+    assert.equal(wire[0].line, 1);
+    assert.ok(["blocker", "high", "medium", "low"].includes(wire[0].severity));
+    assert.match(wire[0].body, /old\/c\.py:1/);
+    assert.match(wire[0].evidence, /^Verified: .*Inferred: /);
+    assert.match(wire[0].suggested_fix, /keep one _same/);
+    assert.equal(run.stderr.trim(), "needs-attention");
+  });
+
+  test("wire output lists a refusal worth a look as low, and approves when empty", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dfu-wire-"));
+    try {
+      write(dir, "a.py", fn("pub", 3));
+      write(dir, "b.py", fn("pub", 3));
+      const run = spawnSync(process.execPath, [SCAN, "--root", dir, "--format", "wire"], {
+        cwd: dir,
+        encoding: "utf8",
+      });
+      const wire = JSON.parse(run.stdout);
+      assert.equal(wire.length, 1);
+      assert.equal(wire[0].severity, "low");
+      assert.match(wire[0].suggested_fix, /^Confirm before merging: consumer check is unknown/);
+      assert.equal(run.stderr.trim(), "approve");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("--format wire with --out writes only that file", () => {
+    const outDir = mkdtempSync(join(tmpdir(), "dfu-wout-"));
+    try {
+      const out = join(outDir, "wire.json");
+      const run = spawnSync(
+        process.execPath,
+        [SCAN, "--root", root, "--diff-base", "main", "--format", "wire", "--out", out],
+        { cwd: root, encoding: "utf8" }
+      );
+      assert.match(run.stdout, /^needs-attention\n1 finding/);
+      assert.deepEqual(listTree(outDir), ["wire.json"]);
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("scan.mjs on a fixture", () => {
   let root;
   let before_files;

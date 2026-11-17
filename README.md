@@ -142,12 +142,14 @@ correct.
 Finds functions, in any programming language, whose bodies are identical once
 comments and whitespace are removed, and proposes keeping one copy. A script
 with no dependencies groups the duplicates and reports where a shared function
-can live, who calls each name (language server references when available, else
-text search, and other repos with `gh search code`), and nearby layering docs.
-The model then reads the code to confirm each finding and to look for
-duplicates the script cannot see. It refuses groups that look deliberate, have
+can live, who calls each name (text search, and other repos with
+`gh search code`), and nearby layering docs. The model then reads the code,
+and uses language server references when available, to confirm each finding and
+to look for duplicates the script cannot see. It refuses groups that look deliberate, have
 no allowed home, or have an unknown consumer. It reports findings, each with a
-proposed change and the check that verifies it, and never edits files.
+proposed change and the check that verifies it, and never edits files. It is
+also a review lens: it follows the shared lens protocol, scopes candidates to a
+diff, a path set, or the whole repo, and can return the lens wire format.
 
 ## Install with Claude Code
 

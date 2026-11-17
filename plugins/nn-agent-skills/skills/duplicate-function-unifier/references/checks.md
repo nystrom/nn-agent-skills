@@ -75,6 +75,13 @@ vendored and build output directories, files whose first 512 bytes carry
 Tracked files that match an ignore rule are still read. A symlinked directory
 is skipped so a link cannot make one file appear as two members.
 
+The script reads files as they are on disk, including uncommitted and untracked
+ones, in every scope mode. `--diff-base` decides which groups are candidates;
+it does not check out the reviewed commit. To review committed work only, run
+the script from a clean checkout of that commit. With `--include-working-tree`
+the changed set is the merge base against the working tree, so a file restored
+to its base contents is not in it.
+
 ## Refusal rules
 
 | Rule | Why it exists |

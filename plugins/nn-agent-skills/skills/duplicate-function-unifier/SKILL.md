@@ -1,8 +1,8 @@
 ---
 name: duplicate-function-unifier
 description: >-
-  Find duplicated functions in a codebase in any programming language and
-  propose merging them. A script finds functions whose bodies are the same
+  Review a change set or a whole repository for duplicated functions, in any
+  programming language, and propose merging them. A script finds functions whose bodies are the same
   token sequence once comments and whitespace are removed; the model then reads
   the code to confirm each finding and to look for duplicates the script cannot
   see (renamed locals, reordered statements, other languages). It checks where
@@ -13,7 +13,8 @@ description: >-
   that look deliberate, belong to a dispatch family, have no allowed home, or
   have an unknown consumer. Reports only: never edits files, commits, or posts.
   Use when asked to deduplicate code, find copy-pasted functions, unify
-  duplicate helpers, or consolidate repeated test helpers.
+  duplicate helpers, consolidate repeated test helpers, or as a review lens
+  under run-review-lenses.
 ---
 
 # Duplicate Function Unifier
@@ -23,6 +24,52 @@ shared copy. A wrong merge proposal breaks correct code, so the script reports
 only exact duplicates and refuses a group when the evidence is missing. The
 script is a lead generator. You confirm or overturn each of its verdicts by
 reading code, and you look for duplicates it cannot see ("Judgment pass").
+
+## Review lens protocol
+
+This skill is a review lens. Read
+`../run-review-lenses/references/lens-protocol.md` and
+`../run-review-lenses/references/review-scope.md` and follow them. They define
+the two invocation modes and the scope modes. The domain rules, the evidence
+rules, and the finding bar are in this file.
+
+- **Standalone** (a user invoked this skill): resolve the scope, run the
+  method below, and return the compact markdown report the protocol describes
+  ("Output"). Write no `review.json`.
+- **Fan-out** (the prompt says "structured findings" or names the wire format):
+  use the scope the orchestrator passed and do not re-derive it. Return only
+  the structured findings ("Wire format") and a one-line headline,
+  `needs-attention` or `approve`.
+
+### Scope
+
+The script's candidates are groups of copies. The scope decides which groups
+are candidates. It never narrows the evidence: the other copies, consumers,
+and hosts are searched in the whole tree in every mode.
+
+| Mode | Candidates | Script flags |
+| ---- | ---------- | ------------ |
+| `diff` (default) | groups with at least one copy in a file the change adds, copies, modifies, or renames | `--diff-base <base>` (pass `origin/main` unless the caller named another base); add `--include-working-tree` when the scope includes uncommitted files |
+| `repo` | every group in the tree | no scope flag |
+| `paths` | groups with a copy under the named paths | `--scope <path>`, repeated |
+
+A new function that duplicates an old one is the main `diff` case: the new
+copy is in the change, and the old copies are found repo-wide. A `diff` scope
+with `--scope` is the intersection (named paths within the change). The
+script anchors each finding at a copy inside the scope, so a diff review points
+at the code the change touched. `scope_mode` and `scope` in the findings file
+record what was examined. A change that adds a function with a copy the script
+cannot match (renamed local, other shape) is the reviewer's to find: read the
+added functions and search the repository for their logic.
+
+### Overlap with other lenses
+
+`ai-slop-code-review` flags copy-pasted or needlessly repeated code it sees in
+the diff. `dead-code-code-review` flags unused copies. This lens adds a
+script-backed, whole-tree search for exact copies of the changed functions,
+a host and consumer check for the merge, and judgment gates before any
+proposal. Findings may overlap on the same code. The orchestrator can merge
+them by `path`, `line`, and the copies named in the body.
 
 ## Contract
 
@@ -75,6 +122,9 @@ With no `--out` the script prints the findings JSON to stdout.
 | ------ | ------ |
 | `--root <dir>` | Repository root. Default: git top level of the current directory. |
 | `--scope <path>` | Keep groups with a member under this path. Repeatable. A group that crosses the scope boundary is kept. |
+| `--diff-base <ref>` | Keep groups with a member in a file changed between the merge base with `<ref>` and HEAD. Evidence still uses the whole tree. With `--scope`, the intersection. |
+| `--include-working-tree` | With `--diff-base`, also count uncommitted and untracked files. |
+| `--format <native\|wire>` | `native`: the findings document. `wire`: the review-lens array ("Wire format"). |
 | `--min-lines <n>` | Smallest body to compare, in logical lines. Default 2. |
 | `--max-file-bytes <n>` | Skip larger files. Default 1048576. |
 | `--gh-owner <org>` | Search this GitHub owner for callers of exported names. |
@@ -102,6 +152,7 @@ the boundaries the script chose. The script does not call a language server.
 {
   "tool": "duplicate-function-unifier",
   "root": "...",
+  "scope_mode": "diff | paths | repo",
   "scope": "whole repository",
   "files_scanned": 0,
   "languages": { "py": { "name": "Python", "files": 0, "verified": true } },
@@ -118,6 +169,7 @@ the boundaries the script chose. The script does not call a language server.
       "line": 1,
       "symbol": "name",
       "language": "Python",
+      "copies": [{ "path": "path", "line": 1, "name": "name" }],
       "severity": "low | medium",
       "members": 2,
       "signal": "which functions share a body",
@@ -139,6 +191,33 @@ groups. All other severities are `low`, and every refused finding is `low`.
 Every finding the script writes has `source: "script"`. Findings you add have
 `source: "reviewer"`, and the `verdict` field you set goes on script findings
 (see "Judgment pass"). The script writes neither.
+
+## Wire format
+
+`--format wire` prints a JSON array of review-lens findings (to stdout, or to
+the file named by `--out`; the headline goes to stderr or, with `--out`, to
+stdout). One finding per group, anchored at the copy inside the scope. Map for
+findings you write yourself the same way.
+
+| Wire field | Value |
+| ---------- | ----- |
+| `source` | `duplicate-function-unifier` (the skill slug). The finder, `script` or `reviewer`, goes in `body` and `evidence` text. |
+| `path`, `line` | the copy inside the scope |
+| `severity` | `medium` or `low` from the script; you may raise to `high` or `blocker` only for a divergence bug you proved (one copy fixed, the other not) |
+| `title` | `Duplicate function NAME: N copies` |
+| `body` | the signal, the other copies (path, line, name), the evidence, and the finder |
+| `suggested_fix` | the proposal text; for a refusal, `Confirm before merging: REASON` |
+| `evidence` | `Verified: ...` for what you established, `Inferred: ...` for the rest, each naming the evidence source (`lsp`, `text`, `read`) |
+
+Refusals are not findings. The script lists at most five refusals that ask a
+person to look (unknown consumer, no allowed home, a deliberate-copy comment)
+as `low` findings. Covered, folded, and dispatch-family refusals are left out.
+Drop any refusal you checked and found sound.
+
+The headline is `needs-attention` when a reported (not refused) finding
+remains after your judgment pass, else `approve`. The script's wire output
+always says `needs-attention` or `approve` from its own findings; correct it
+after the pass.
 
 ## What the script cannot see
 
@@ -221,11 +300,12 @@ Do this after the script, before any proposal reaches the user.
    (see above). Report each duplicate you find with `source: "reviewer"`, the
    files and lines, the evidence you read, and a proposal or a refusal with its
    reason. Do not report a resemblance you did not read both sides of.
-3. **Keep the labels.** Script findings keep `source: "script"`. Write your
-   verdicts into the findings file as a `verdict` field on each script
-   finding, and add your own findings with the same fields and
-   `source: "reviewer"`. A reviewer finding needs no verdict, because you read
-   it before you wrote it. Set `evidence_source` truthfully on every finding.
+3. **Keep the labels.** Script findings keep `source: "script"`. Return
+   your verdicts in the report as a `verdict` on each script finding, and add
+   your own findings with the same fields and `source: "reviewer"`. Write them
+   into a findings file only when the user names one. A reviewer finding needs
+   no verdict, because you read it before you wrote it. Set `evidence_source`
+   truthfully on every finding.
 
 ## The proposed change
 
@@ -279,6 +359,9 @@ You apply these rules by judgment, because the script cannot see them:
 - A group whose members sit in two layers with no allowed shared location.
 
 ## Output
+
+In fan-out mode, return the wire format and the headline only. Standalone: start with the verdict (`needs-attention` or `approve`) and one
+line for the mode and scope. Then:
 
 The script's own summary (with `--out`) lists reported findings only. Print a
 summary of at most 120 words: counts, then the findings in rank order
