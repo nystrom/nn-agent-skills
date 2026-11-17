@@ -137,6 +137,17 @@ are characterization tests, written to a separate `*.generated` test file; an
 optional review pass on a stronger model judges whether each pinned behavior is
 correct.
 
+### useless-test-pruner
+
+Scans a whole tree for test cases that run and cannot fail: a case with no
+assertion, an assertion that holds for every input, and a case that asserts
+without reaching any code the repo owns. `scripts/scan.mjs` parses the test
+files (it needs the `typescript` package in the target repo) and writes a JSON
+findings file. It refuses snapshot-backed cases, cases that assert through a
+helper, and cases that pin a dependency on purpose, and counts each refusal. It
+reports and proposes; it edits only when asked. For a diff, use
+`test-coverage-code-review`.
+
 ## Install with Claude Code
 
 Add this marketplace, then install the plugin:
@@ -171,7 +182,7 @@ Invoke the skills as `$run-review-lenses`, `$adversarial-review`,
 `$dead-code-code-review`, `$ai-slop-code-review`, `$numerical-code-review`,
 `$codex-code-review` (which skips itself inside Codex),
 `$interactive-code-review`,
-`$ui-code-review`, `$concolic-test-generation`, or describe a matching task
+`$ui-code-review`, `$concolic-test-generation`, `$useless-test-pruner`, or describe a matching task
 and let Codex select the skill.
 
 ## Install with Antigravity
