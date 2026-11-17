@@ -23,6 +23,12 @@ when an even number of quote characters precede it on the line). Files over
 `skipped_files`. A file that is symlinked or skipped yields no edges and no
 findings.
 
+In diff mode (`--diff`, `--changed-file`) the checks run on all edges, and a
+finding is kept when its file, its `target`, or an import it summarizes is in
+the changed set. A finding whose cause is a deleted file or a moved module has
+no changed file on either side and is not kept; read the importers of old paths
+yourself.
+
 ## `test-import`
 
 A non-test file has an edge to a test file. A file is a test file when it

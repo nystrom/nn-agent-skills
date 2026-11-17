@@ -148,7 +148,9 @@ from the repo's docs and lint config, takes import edges from a language server
 (or text search when none exists), and checks them against the rules with a
 bundled Node script (no install). Findings are ranked, labeled by evidence
 source, and each carries a proposed change and a check that verifies it. The
-skill reports; it does not edit files.
+skill reports; it does not edit files. It is also a review lens: it follows the
+lens protocol, supports the `diff`, `repo`, and `paths` scopes, and can return
+findings in the structured format that `run-review-lenses` merges.
 
 ## Install with Claude Code
 

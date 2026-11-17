@@ -135,7 +135,7 @@ describe("check.mjs", () => {
     assert.equal(run(root, RULES, "--scope", "../elsewhere").status, 2);
   });
 
-  it("decides a scoped package finding from the edges in scope only", () => {
+  it("decides a scoped package finding from repo-wide edges", () => {
     const edgesPath = join(makeRepo({ "e.json": "[]" }), "e.json");
     writeFileSync(
       edgesPath,
@@ -148,8 +148,81 @@ describe("check.mjs", () => {
       (f) => f.check === "undeclared-package-dep"
     );
     assert.equal(hits.length, 1);
-    assert.equal(hits[0].severity, "medium");
-    assert.deepEqual(hits[0].sources, ["app/prod_test.py:2"]);
+    assert.equal(hits[0].severity, "high");
+    assert.deepEqual(hits[0].sources, ["app/prod.py:1", "app/prod_test.py:2"]);
+  });
+
+  it("limits candidates to the change but keeps repo-wide evidence", () => {
+    const changedFile = join(makeRepo({ "c.txt": "lib/core_test.py\n" }), "c.txt");
+    const report = JSON.parse(run(root, RULES, "--changed-file", changedFile).stdout);
+    assert.deepEqual(report.candidate_scope, { mode: "diff", changed_files: 1 });
+    // lib/core.py is unchanged but imports the changed test file: a neighbor.
+    assert.ok(report.findings.length > 0);
+    assert.ok(report.findings.every((f) => f.target === "lib/core_test.py"));
+    assert.ok(report.findings.some((f) => f.check === "test-import" && f.file === "lib/core.py"));
+    const none = JSON.parse(
+      run(root, RULES, "--changed-file", join(makeRepo({ "c.txt": "README.md\n" }), "c.txt")).stdout
+    );
+    assert.equal(none.counts.reported, 0);
+    const all = JSON.parse(run(root, RULES).stdout);
+    assert.equal(all.candidate_scope.mode, "repo");
+  });
+
+  it("reads changed files from git for --diff and --working-tree", () => {
+    const repo = makeRepo({ "lib/core.py": "", "util/u.py": "from lib.core import f\n", "app/x.py": "" });
+    const git = (...args) =>
+      spawnSync("git", ["-C", repo, "-c", "user.email=t@t", "-c", "user.name=t", ...args], { encoding: "utf8" });
+    git("init", "-q", "-b", "main");
+    git("add", "-A");
+    git("commit", "-q", "-m", "base");
+    git("checkout", "-q", "-b", "topic");
+    writeFileSync(join(repo, "app/x.py"), "# touched\n");
+    git("commit", "-q", "-am", "change");
+    const committed = JSON.parse(run(repo, RULES, "--diff", "main").stdout);
+    assert.deepEqual(committed.candidate_scope, { mode: "diff", changed_files: 1 });
+    assert.equal(committed.counts.reported, 0);
+    writeFileSync(join(repo, "util/u.py"), "from lib.core import f\n# dirty\n");
+    const dirty = JSON.parse(run(repo, RULES, "--diff", "main", "--working-tree").stdout);
+    assert.equal(dirty.candidate_scope.changed_files, 2);
+    assert.deepEqual(dirty.findings.map((f) => f.check).sort(), [
+      "layer-direction",
+      "undeclared-package-dep",
+    ]);
+    git("checkout", "-q", "--", "util/u.py");
+    writeFileSync(join(repo, "app/x.py"), "");
+    const reverted = JSON.parse(run(repo, RULES, "--diff", "main", "--working-tree").stdout);
+    assert.equal(reverted.candidate_scope.changed_files, 0);
+    const range = JSON.parse(run(repo, RULES, "--diff", "main..topic").stdout);
+    assert.equal(range.candidate_scope.changed_files, 1);
+    writeFileSync(join(repo, "ünï \"q\".py"), "");
+    const odd = JSON.parse(run(repo, RULES, "--diff", "main", "--working-tree").stdout);
+    assert.equal(odd.candidate_scope.changed_files, 1);
+    assert.equal(run(repo, RULES, "--diff", "no-such-ref").status, 2);
+    assert.equal(run(repo, RULES, "--working-tree").status, 2);
+  });
+
+  it("prints the review-lens wire format and a headline", () => {
+    const r = run(root, RULES, "--format", "wire");
+    const wire = JSON.parse(r.stdout);
+    assert.match(r.stderr, /needs-attention/);
+    const keys = ["body", "evidence", "line", "path", "severity", "source", "suggested_fix", "title"];
+    for (const item of wire) {
+      assert.deepEqual(Object.keys(item).sort(), keys);
+      assert.equal(item.source, "layering-rules-check");
+      assert.ok(["blocker", "high", "medium", "low"].includes(item.severity));
+      assert.match(item.evidence, /^(Verified|Inferred): /);
+      assert.match(item.body, /source: script/);
+    }
+    assert.ok(wire.every((w) => !w.title.startsWith("test-import") || w.path !== "util/tests/support.py"));
+    const unchecked = wire.find((w) => w.path === "legacy/old.py");
+    assert.equal(unchecked.line, null);
+    assert.match(unchecked.evidence, /^Verified: /);
+    const clean = run(makeRepo({ "a.py": "" }), RULES, "--format", "wire");
+    assert.deepEqual(JSON.parse(clean.stdout).filter((w) => w.path !== "legacy/old.py"), []);
+    const out = join(makeRepo({}), "wire.json");
+    const withOut = run(root, RULES, "--format", "wire", "--out", out);
+    assert.ok(Array.isArray(JSON.parse(readFileSync(out, "utf8"))));
+    assert.match(withOut.stderr, /^needs-attention$/m);
   });
 
   it("rejects malformed rules and edges with exit 2", () => {

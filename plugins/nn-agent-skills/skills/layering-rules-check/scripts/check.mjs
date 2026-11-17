@@ -6,19 +6,33 @@
 //
 // Exit codes: 0 no reported findings, 1 findings reported, 2 could not run.
 
+import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { extractEdges } from "./edges.mjs";
 import { assertOutsideRepo, assertScannable, die, findRoot, matcher, toPosix, walk } from "./lib.mjs";
 
-const USAGE = `usage: check.mjs --rules <file> [--edges <file>] [--root <dir>] [--scope <path>]... [--out <file>]
+const USAGE = `usage: check.mjs --rules <file> [--edges <file>] [--root <dir>] [--scope <path>]...
+                [--diff <base> [--working-tree] | --changed-file <file>]
+                [--format findings|wire] [--out <file>]
 
   --rules <file>  Layering rules file (JSON). See references/rules.md.
   --edges <file>  Import edge list (JSON), for example from a language server.
                   Default: extract with edges.mjs (evidence_source "text").
   --root <dir>    Repository root. Default: git top level, else working directory.
   --scope <path>  Keep findings under this path (relative to the root). Repeatable.
+                  Edges are still read repo-wide; only the findings narrow.
+  --diff <base>   Keep candidates the change touches: findings in a changed file,
+                  or whose target or summarized imports are in a changed file.
+                  Changed files come from \`git diff --name-only <base>...HEAD\`.
+                  Evidence (edges, packages) stays repo-wide.
+  --working-tree  With --diff, also include uncommitted and untracked files.
+  --changed-file <file>
+                  Read the changed paths from a file (one per line) instead of git.
+  --format <f>    findings (default) or wire: a JSON array of review-lens
+                  findings { source, path, line, severity, title, body,
+                  suggested_fix, evidence }.
   --out <file>    Write the JSON findings here and print a ranked summary.
                   Without it, the JSON goes to standard output.
   -h, --help      This text.
@@ -78,6 +92,23 @@ function parseArgs(argv) {
         break;
       case "--scope":
         options.scopes.push(value(i, "--scope"));
+        i += 1;
+        break;
+      case "--diff":
+        options.diff = value(i, "--diff");
+        i += 1;
+        break;
+      case "--working-tree":
+        options.workingTree = true;
+        break;
+      case "--changed-file":
+        options.changedFile = resolve(value(i, "--changed-file"));
+        i += 1;
+        break;
+      case "--format":
+        options.format = value(i, "--format");
+        ["findings", "wire"].includes(options.format) ||
+          die(`check.mjs: --format must be findings or wire\n${USAGE}`);
         i += 1;
         break;
       case "--out":
@@ -173,11 +204,7 @@ function finding(check, fields) {
   };
 }
 
-function makeContext(rules, edges, files, scopes) {
-  const within = (scope, path) => scope === "" || path === scope || path.startsWith(`${scope}/`);
-  // Package findings aggregate edges, so the scope filters the edges first.
-  const scopedEdges =
-    scopes.length === 0 ? edges : edges.filter((e) => scopes.some((s) => within(s, e.from)));
+function makeContext(rules, edges, files) {
   const isTest = matcher(rules.test_globs ?? DEFAULT_TEST_GLOBS);
   const layerOf = (() => {
     const layers = (rules.layers ?? []).map((l) => ({ name: l.name, match: matcher(l.paths) }));
@@ -193,7 +220,7 @@ function makeContext(rules, edges, files, scopes) {
       )
     );
   const refusals = (rules.refuse ?? []).map((r) => ({ check: r.check, match: matcher([r.glob]), reason: r.reason }));
-  return { rules, edges, scopedEdges, files, isTest, layerOf, packages, packageOf, packageByName, inside, refusals };
+  return { rules, edges, files, isTest, layerOf, packages, packageOf, packageByName, inside, refusals };
 }
 
 function testImports(ctx) {
@@ -205,6 +232,7 @@ function testImports(ctx) {
         severity: support ? "low" : "high",
         file: e.from,
         line: e.line,
+        target: e.to,
         evidence_source: e.evidence_source,
         idSuffix: ` ${e.to}`,
         signal: `production module imports test module ${e.to}`,
@@ -238,6 +266,7 @@ function layerDirection(ctx) {
           severity: "high",
           file: e.from,
           line: e.line,
+          target: e.to,
           evidence_source: e.evidence_source,
           idSuffix: ` ${from}->${to}`,
           signal: `layer "${from}" imports layer "${to}" (${e.to}), which the rules do not allow`,
@@ -260,6 +289,7 @@ function foreignBarrelReexports(ctx) {
         severity: "medium",
         file: e.from,
         line: e.line,
+        target: e.to,
         evidence_source: e.evidence_source,
         idSuffix: ` ${e.to}`,
         signal: `barrel re-exports a module from another directory (${e.to})`,
@@ -276,7 +306,7 @@ function undeclaredPackageDeps(ctx) {
     return { skipped: "no packages in the rules file" };
   }
   const usage = new Map();
-  for (const e of ctx.scopedEdges) {
+  for (const e of ctx.edges) {
     const source = ctx.packageOf(e.from);
     const target =
       e.to !== null && e.to !== undefined ? ctx.packageOf(e.to) : ctx.packageByName(e.specifier);
@@ -333,6 +363,7 @@ function uncheckedSources(ctx) {
         finding("unchecked-source", {
           severity: "medium",
           file,
+          evidence_source: "read",
           idSuffix: "",
           signal: `source file that ${entry.reason ?? "the repo's checkers skip"}`,
           evidence:
@@ -363,8 +394,17 @@ function rank(a, b) {
   );
 }
 
-export function check({ rules, edges, files, scopes = [] }) {
-  const ctx = makeContext(validateRules(rules), validateEdges(edges), files, scopes);
+/** A candidate is touched by the change: its file, target, or summarized imports changed. */
+function touched(f, changed) {
+  return (
+    changed.has(f.file) ||
+    (f.target !== undefined && changed.has(f.target)) ||
+    (f.sources ?? []).some((x) => changed.has(x.replace(/:\d+$/, "")))
+  );
+}
+
+export function check({ rules, edges, files, scopes = [], changed }) {
+  const ctx = makeContext(validateRules(rules), validateEdges(edges), files);
   const skippedChecks = [];
   const raw = [];
   for (const run of CHECKS) {
@@ -386,10 +426,15 @@ export function check({ rules, edges, files, scopes = [] }) {
           (s) => within(s, f.file) || (f.sources ?? []).some((x) => within(s, x.replace(/:\d+$/, "")))
         )
     )
+    .filter((f) => changed === undefined || touched(f, changed))
     .sort(rank);
   return {
     tool: "layering-rules-check",
     scope: scopes.length === 0 ? "." : scopes.join(", "),
+    candidate_scope:
+      changed === undefined
+        ? { mode: scopes.length === 0 ? "repo" : "paths" }
+        : { mode: "diff", changed_files: changed.size },
     generated_at: new Date().toISOString(),
     counts: {
       candidates: all.length,
@@ -401,9 +446,71 @@ export function check({ rules, edges, files, scopes = [] }) {
   };
 }
 
+const WIRE_SEVERITY = { high: "high", medium: "medium", low: "low", nit: "low" };
+
+/** Maps script findings to the review-lens wire format. Refusals are omitted. */
+export function toWire(report) {
+  return report.findings
+    .filter((f) => !f.refused)
+    .map((f) => {
+      const verified = f.evidence_source === "lsp" || f.evidence_source === "read";
+      const where = f.line === undefined ? f.file : `${f.file}:${f.line}`;
+      return {
+        source: "layering-rules-check",
+        path: f.file,
+        line: f.line ?? null,
+        severity: WIRE_SEVERITY[f.severity] ?? "low",
+        title: `${f.check}: ${f.signal}`,
+        body: `${f.signal}. Why it matters: ${f.evidence}. (source: script)`,
+        suggested_fix: `${f.proposal}. Verify: ${f.verify}.`,
+        evidence: verified
+          ? `Verified: ${f.check} fired at ${where} on ${f.evidence_source} evidence (source: script).`
+          : `Inferred: ${f.check} fired at ${where} on text evidence, which approximates import resolution; read the code to confirm (source: script).`,
+      };
+    });
+}
+
+function headline(report) {
+  return report.counts.reported > 0 ? "needs-attention" : "approve";
+}
+
+/** Changed paths for diff mode. Read-only git commands. */
+function changedPaths(root, options) {
+  if (options.changedFile !== undefined) {
+    return new Set(
+      readFileSync(options.changedFile, "utf8")
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l !== "")
+    );
+  }
+  // NUL-separated output keeps unusual file names intact.
+  const git = (...args) =>
+    execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })
+      .split("\0")
+      .filter((l) => l !== "");
+  try {
+    // A base ref means merge-base...HEAD; a range (a..b, a...b) is used as given.
+    const range = options.diff.includes("..") ? options.diff : `${options.diff}...HEAD`;
+    if (!options.workingTree) {
+      return new Set(git("diff", "-z", "--name-only", "--relative", range));
+    }
+    // The net change through the working tree, so a reverted change drops out.
+    const left = options.diff.split(/\.{2,3}/)[0] || "HEAD";
+    const mergeBase = git("merge-base", left, "HEAD")[0].trim();
+    return new Set([
+      ...git("diff", "-z", "--name-only", "--relative", mergeBase),
+      ...git("ls-files", "-z", "--others", "--exclude-standard"),
+    ]);
+  } catch (error) {
+    die(`check.mjs: git failed for base ${options.diff}: ${(error.stderr ?? error.message).toString().trim()}`);
+  }
+  return new Set();
+}
+
 function summary(report, limit = 20) {
   const lines = [
-    `layering-rules-check: ${report.counts.reported} reported, ${report.counts.refused} refused`,
+    `layering-rules-check: ${headline(report)}; ${report.counts.reported} reported, ${report.counts.refused} refused`,
   ];
   for (const f of report.findings.filter((x) => !x.refused).slice(0, limit)) {
     lines.push(`  [${f.severity}] ${f.check} ${f.file}${f.line ? `:${f.line}` : ""} (${f.evidence_source}): ${f.signal}`);
@@ -437,14 +544,22 @@ function main() {
       (rel === ".." || rel.startsWith("../")) && die(`check.mjs: scope is outside the root: ${scope}`);
       return rel;
     });
-    const report = { ...check({ rules, edges, files, scopes }), root, skipped_files: skipped };
-    const json = `${JSON.stringify(report, null, 2)}\n`;
+    (options.diff !== undefined || options.changedFile !== undefined || options.workingTree === undefined) ||
+      die("check.mjs: --working-tree needs --diff");
+    const changed =
+      options.diff === undefined && options.changedFile === undefined
+        ? undefined
+        : changedPaths(root, options);
+    const report = { ...check({ rules, edges, files, scopes, changed }), root, skipped_files: skipped };
+    const payload = options.format === "wire" ? toWire(report) : report;
+    const json = `${JSON.stringify(payload, null, 2)}\n`;
     if (options.out === undefined) {
       process.stdout.write(json);
     } else {
       writeFileSync(options.out, json);
       process.stdout.write(summary(report));
     }
+    options.format === "wire" && process.stderr.write(`${headline(report)}\n`);
     process.exitCode = report.counts.reported > 0 ? 1 : 0;
   } catch (error) {
     die(`check.mjs: ${error.message}`);

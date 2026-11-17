@@ -9,9 +9,10 @@ description: >-
   that the repo's checkers skip. Builds a layering rules file from the repo's
   docs and lint config, checks import edges from a language server (or text
   search) against it, and reports ranked findings with a proposed change for
-  each. It does not edit files. Use when asked to check layering, module
-  boundaries, dependency direction, package dependencies, barrel exports, or
-  whether an architecture document matches the imports.
+  each. It does not edit files. Reviews a change set or a whole repo. Use when
+  asked to check layering, module boundaries, dependency direction, package
+  dependencies, barrel exports, or whether an architecture document matches
+  the imports, or as a review lens under run-review-lenses.
 ---
 
 # Layering Rules Check
@@ -19,6 +20,10 @@ description: >-
 Repos state layering rules in lint zones, style guides, contributor notes, and
 architecture documents. Lint and the compiler enforce only some of them. This
 skill finds code that breaks the rest and reports it with evidence.
+
+This is a review lens. Read `../run-review-lenses/references/lens-protocol.md`
+and `../run-review-lenses/references/review-scope.md` and follow them. They
+define the two invocation modes and the scope modes used below.
 
 Contract: the output is findings. Each finding has a concrete proposed change
 (what to change, where, and the check that verifies it), written as text or a
@@ -28,6 +33,34 @@ changes. The scripts never write to the repo under review. They write only the
 file named with `--out`, and they refuse an `--out` path inside the repo
 (also through a symlink). Name a path outside the repo, for example under the
 system temp directory.
+
+## Invocation and scope
+
+**Standalone** (the user invoked this skill): resolve the scope, run the method,
+and return the compact markdown report from the lens protocol (verdict
+`needs-attention` or `approve`, mode and scope in one line, a summary, ranked
+findings).
+
+**Fan-out** (the prompt says "structured findings" or names the wire format, or
+`run-review-lenses` loaded you): use the scope the orchestrator passed and do
+not re-derive it. Return only the structured list (below) and a one-line
+headline, `needs-attention` or `approve`. No other prose.
+
+Scope mapping. In every mode, evidence is computed repo-wide: import edges,
+package lists, layer membership, and the rules file cover the whole tree. Only
+the candidates narrow. Never narrow the evidence search to the diff.
+
+| Mode | Candidates | How |
+| ---- | ---------- | --- |
+| `diff` (default) | Findings in a changed file, findings whose target is a changed file, and package findings summarizing an import in a changed file. | `check.mjs --diff <base>` (changed files from `git diff --name-only <base>...HEAD`), plus `--working-tree` when asked or the tree is dirty. `--changed-file <file>` reads the changed paths from a list when the orchestrator gave them or git is not the VCS. |
+| `repo` | The whole tree. | No scope flag. |
+| `paths` | Findings under the named paths. | `--scope <path>`, repeatable. |
+
+A moved or deleted file has no current path, so its old importers appear as
+unresolved edges (`to: null`) or not at all. For a change that deletes or moves
+modules, also read the importers of the old paths with `rg` and report them as
+reviewer findings. The `candidate_scope` field of the JSON records the mode and
+the number of changed files.
 
 ## Method
 
@@ -40,8 +73,10 @@ naming, re-export idioms, language servers) are in `references/languages.md`.
 2. **Write the rules file.** Turn the rules into data (`references/rules.md`):
    layers, allowed directions, packages and their declared dependencies, test
    and barrel classification, files the checkers skip, known intended
-   exceptions. Show the file to the user and get it confirmed before you rely
-   on it. A rule you cannot find written down is a guess; leave it out.
+   exceptions. In a standalone run, show the file to the user and get it
+   confirmed before you rely on it. In a fan-out run, do not wait: derive each
+   rule from a cited document or config line, name the rules file and its
+   sources in the evidence, and leave out any rule you cannot cite. A rule you cannot find written down is a guess; leave it out.
 3. **Get import edges.** Check whether a language server is configured or
    startable for the language. Prefer it over text search: use find-references,
    document and workspace symbols, and diagnostics to list which module imports
@@ -73,9 +108,27 @@ node <skill-dir>/scripts/check.mjs --rules /tmp/rules.json --edges /tmp/edges.js
 
 `check.mjs` extracts edges itself when `--edges` is absent. Options: `--root`
 (default git top level), `--scope <path>` (repeatable, relative to the root),
-`--out`. Exit status: 0 when nothing is reported, 1 when findings are reported,
+`--diff <base>`, `--working-tree`, `--changed-file <file>`, `--format
+findings|wire`, `--out`. Exit status: 0 when nothing is reported, 1 when findings are reported,
 2 when the check cannot run. Refusals do not set status 1. Both scripts need
 Node 20 or newer and nothing else.
+
+## Overlap with other lenses
+
+- `dead-code-code-review` finds symbols with no callers. This skill finds
+  imports that cross a layer, test, package, or barrel boundary. A test-only
+  production helper can appear in both; keep the dead-code finding and cite this
+  one as the boundary view.
+- `test-coverage-code-review` judges whether tests cover the change. This
+  skill reports only production code that imports test code.
+- `ai-slop-code-review` finds generated-code residue, including needless
+  re-export wrappers. A barrel finding here rests on a written rule and an
+  import edge, not on style.
+
+What this skill adds: whole-tree edge evidence from a script or a language
+server, a rules file confirmed by the user, and a judgment gate per finding. If
+another lens reports the same file and line, the merge can keep one and link
+the other.
 
 ## Checks
 
@@ -119,7 +172,7 @@ Refuse (list separately, with the reason) when:
   helpers. The script marks this case `refused`.
 - A document next to the code says the indirection is deliberate.
 - A re-export keeps a public API stable after a symbol moved, and a comment says
-  so. Report it as a question for the maintainer, with the alternative.
+  so. Report it as a question, with the alternative.
 - The edge stays inside one layer or one top-level directory of a dependency
   table.
 
@@ -148,3 +201,25 @@ Each finding has:
 
 The summary lists reported findings by severity, then skipped checks. Reviewer
 findings and the judgments appear in the report, not in the JSON.
+
+## Wire format
+
+`check.mjs --format wire` prints a JSON array of review-lens findings (to
+standard output, or to `--out`) and the headline on standard error. Map each
+reported finding as follows. Add your reviewer findings in the same shape.
+
+| Wire field | Value |
+| ---------- | ----- |
+| `source` | `layering-rules-check` (the skill slug) |
+| `path` | `file` |
+| `line` | `line`, or `null` for a whole-file finding |
+| `severity` | `high`, `medium`, `low`; `nit` becomes `low`. Use `blocker` only when you judged that the change cannot ship with the violation. |
+| `title` | `<check>: <signal>` |
+| `body` | `signal`, the reason from `evidence`, and `(source: script)` or `(source: reviewer)` |
+| `suggested_fix` | `proposal` and the `verify` check |
+| `evidence` | `Verified: ...` when `evidence_source` is `lsp` or `read`; `Inferred: ...` when it is `text`. Name the evidence source. |
+
+The headline is `needs-attention` when any finding is reported, else `approve`.
+Refusals are not findings in fan-out. Add at most the refusals worth a look as
+`low`, with `suggested_fix` saying what to confirm. No material finding is
+success: return an empty list and `approve`.
