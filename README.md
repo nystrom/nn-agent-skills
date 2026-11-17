@@ -139,13 +139,15 @@ correct.
 
 ### duplicate-function-unifier
 
-Finds JavaScript and TypeScript functions whose bodies are identical once
+Finds functions, in any programming language, whose bodies are identical once
 comments and whitespace are removed, and proposes keeping one copy. A script
-groups the duplicates and reports where a shared function can live, who calls
-each exported name (in-repo, and other repos with `gh search code` when
-available), and nearby layering docs. It refuses groups that look deliberate,
-have no allowed home, or have an unknown consumer. It writes a findings file and
-a ranked summary, and edits only when asked.
+with no dependencies groups the duplicates and reports where a shared function
+can live, who calls each name (language server references when available, else
+text search, and other repos with `gh search code`), and nearby layering docs.
+The model then reads the code to confirm each finding and to look for
+duplicates the script cannot see. It refuses groups that look deliberate, have
+no allowed home, or have an unknown consumer. It reports findings, each with a
+proposed change and the check that verifies it, and never edits files.
 
 ## Install with Claude Code
 

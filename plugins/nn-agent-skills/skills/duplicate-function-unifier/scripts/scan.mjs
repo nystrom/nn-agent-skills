@@ -1,27 +1,25 @@
 #!/usr/bin/env node
 //
-// Finds functions whose bodies are the same text once comments and whitespace
-// are removed, groups them, and reports each group with the evidence a merge
-// needs. It never edits files.
+// Finds functions whose bodies are the same token sequence once comments and
+// whitespace are removed, groups them, and reports each group with the
+// evidence a merge needs. It never edits files and needs no packages.
+//
+// Function boundaries come from a text heuristic per language family (braces,
+// indentation, or an `end` keyword). Language servers give better boundaries;
+// the skill tells the reviewer to confirm each finding by reading the code.
 //
 // The comparison is exact. A similarity threshold also reports pairs that only
-// resemble each other because they solve similar problems, and a merge
-// proposal against those is a bug report against correct code. The price is
-// that renaming one local variable hides a pair.
+// resemble each other, and a merge proposal against those is a wrong proposal.
+// The price is that renaming one local variable hides a pair.
 
 import { execFileSync } from "node:child_process";
 import {
-  existsSync,
   lstatSync,
-  openSync,
   readFileSync,
-  readSync,
-  closeSync,
   readdirSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { createRequire } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
 
 const USAGE = `usage: scan.mjs [options]
@@ -30,9 +28,9 @@ Options:
   --root <dir>            Repository root. Default: git top level of the
                           current directory, else the current directory.
   --scope <path>          Keep groups with a member under this path (relative
-                          to the root). A group that straddles the scope
+                          to the root). A group that crosses the scope
                           boundary is kept. Repeatable.
-  --min-statements <n>    Smallest function body to compare. Default 2.
+  --min-lines <n>         Smallest body to compare, in logical lines. Default 2.
   --max-file-bytes <n>    Skip files larger than this. Default 1048576.
   --gh-owner <org>        Also search this GitHub owner for callers of exported
                           names with \`gh search code\`.
@@ -43,7 +41,220 @@ Options:
 Exit codes: 0 no groups found, 1 groups found, 2 the scan could not run.
 `;
 
-const SOURCE_EXT = /\.(?:[cm]?[jt]s|[jt]sx)$/;
+const BRACE = "brace";
+const INDENT = "indent";
+const END = "end";
+
+const C_STYLE = { line: ["//"], block: [["/*", "*/"]] };
+
+/**
+ * Per-language lexing and boundary rules. \`verified\` is true only for
+ * languages that scan.test.mjs exercises; the others use the same family rule
+ * and their results are leads.
+ */
+const LANGS = {
+  js: {
+    name: "JavaScript/TypeScript",
+    exts: ["js", "jsx", "mjs", "cjs", "ts", "tsx", "mts", "cts"],
+    family: BRACE,
+    ...C_STYLE,
+    strs: ['"', "'", "`"],
+    fn: ["function"],
+    methods: true,
+    arrows: true,
+    regex: true,
+    newlines: true,
+    verified: true,
+  },
+  py: {
+    name: "Python",
+    exts: ["py"],
+    family: INDENT,
+    line: ["#"],
+    block: [],
+    strs: ['"', "'"],
+    triple: ['"""', "'''"],
+    fn: ["def"],
+    newlines: true,
+    verified: true,
+  },
+  go: {
+    name: "Go",
+    exts: ["go"],
+    family: BRACE,
+    ...C_STYLE,
+    strs: ['"', "`"],
+    rawBacktick: true,
+    char: "'",
+    fn: ["func"],
+    receiver: true,
+    newlines: true,
+    verified: true,
+  },
+  rs: {
+    name: "Rust",
+    exts: ["rs"],
+    family: BRACE,
+    ...C_STYLE,
+    nestBlock: true,
+    strs: ['"'],
+    char: "'",
+    fn: ["fn"],
+    newlines: false,
+    verified: true,
+  },
+  java: {
+    name: "Java",
+    exts: ["java"],
+    family: BRACE,
+    ...C_STYLE,
+    strs: ['"'],
+    triple: ['"""'],
+    char: "'",
+    fn: [],
+    methods: true,
+    newlines: false,
+    verified: true,
+  },
+  c: {
+    name: "C",
+    exts: ["c", "h"],
+    family: BRACE,
+    ...C_STYLE,
+    strs: ['"'],
+    char: "'",
+    fn: [],
+    methods: true,
+    newlines: false,
+    verified: true,
+  },
+  cpp: {
+    name: "C++",
+    exts: ["cc", "cpp", "cxx", "hpp", "hh"],
+    family: BRACE,
+    ...C_STYLE,
+    strs: ['"'],
+    char: "'",
+    fn: [],
+    methods: true,
+    newlines: false,
+    verified: false,
+  },
+  kt: {
+    name: "Kotlin",
+    exts: ["kt", "kts"],
+    family: BRACE,
+    ...C_STYLE,
+    nestBlock: true,
+    strs: ['"'],
+    triple: ['"""'],
+    char: "'",
+    fn: ["fun"],
+    newlines: true,
+    verified: false,
+  },
+  cs: {
+    name: "C#",
+    exts: ["cs"],
+    family: BRACE,
+    ...C_STYLE,
+    strs: ['"'],
+    char: "'",
+    fn: [],
+    methods: true,
+    newlines: false,
+    verified: false,
+  },
+  jl: {
+    name: "Julia",
+    exts: ["jl"],
+    family: END,
+    line: ["#"],
+    block: [["#=", "=#"]],
+    nestBlock: true,
+    strs: ['"'],
+    triple: ['"""'],
+    char: "'",
+    bang: true,
+    fn: ["function"],
+    open: [
+      "function",
+      "if",
+      "for",
+      "while",
+      "begin",
+      "let",
+      "try",
+      "do",
+      "struct",
+      "module",
+      "macro",
+      "quote",
+      "abstract",
+      "primitive",
+    ],
+    newlines: true,
+    verified: true,
+  },
+  rb: {
+    name: "Ruby",
+    exts: ["rb"],
+    family: END,
+    line: ["#"],
+    block: [],
+    strs: ['"', "'"],
+    bang: true,
+    fn: ["def"],
+    open: [
+      "def",
+      "class",
+      "module",
+      "if",
+      "unless",
+      "while",
+      "until",
+      "case",
+      "begin",
+      "do",
+      "for",
+    ],
+    modifiers: ["if", "unless", "while", "until"],
+    newlines: true,
+    verified: true,
+  },
+};
+
+const LANG_BY_EXT = new Map(
+  Object.entries(LANGS).flatMap(([id, lang]) =>
+    lang.exts.map((ext) => [ext, id])
+  )
+);
+// Source extensions this script does not read. They are reported so the
+// reviewer reads those files for duplicates.
+const UNSCANNED_EXT = new Set([
+  "swift",
+  "scala",
+  "php",
+  "lua",
+  "ex",
+  "exs",
+  "hs",
+  "ml",
+  "zig",
+  "dart",
+  "r",
+  "pl",
+  "sh",
+  "bash",
+  "m",
+  "mm",
+  "clj",
+  "erl",
+  "f90",
+  "vb",
+  "sql",
+]);
+
 const SKIP_DIRS = new Set([
   ".git",
   ".hg",
@@ -53,17 +264,57 @@ const SKIP_DIRS = new Set([
   "dist",
   "build",
   "out",
+  "target",
   "coverage",
   "vendor",
+  "__pycache__",
+  ".venv",
+  "venv",
   ".next",
   ".turbo",
 ]);
-const ASI_SENSITIVE = new Set(["return", "throw", "break", "continue", "yield"]);
 const GENERATED_MARKER = /@generated|DO NOT EDIT|Code generated/i;
 // A comment that says the copies are on purpose is a refusal, because the
 // author already decided the question this tool would reopen.
 const DELIBERATE_MARKER =
   /\b(?:intentional(?:ly)?|deliberate(?:ly)?)\b|keep in sync|do not (?:merge|unify|dedupe|deduplicate)|duplicated on purpose/i;
+const CONTROL = new Set([
+  "if",
+  "for",
+  "while",
+  "switch",
+  "catch",
+  "match",
+  "synchronized",
+  "with",
+  "return",
+  "try",
+  "using",
+  "lock",
+  "foreach",
+  "else",
+  "sizeof",
+]);
+const OPS = [
+  "===",
+  "!==",
+  "...",
+  "=>",
+  "->",
+  "::",
+  "==",
+  "!=",
+  "<=",
+  ">=",
+  "&&",
+  "||",
+  ":=",
+  "++",
+  "--",
+  "+=",
+  "-=",
+];
+const CLOSERS = new Set(["}", ")", "]", ";", ",", "end"]);
 const DOC_NAMES = new Set([
   "ARCHITECTURE.md",
   "DESIGN.md",
@@ -72,7 +323,25 @@ const DOC_NAMES = new Set([
   "CONTRIBUTING.md",
 ]);
 const LAYERING_CONFIG =
-  /boundaries|no-restricted-imports|no-restricted-paths|dependency-cruiser|import\/no-/i;
+  /boundaries|no-restricted-imports|no-restricted-paths|dependency-cruiser|importlinter|import-linter|depguard|cargo-deny|archunit/i;
+const LAYERING_CONFIG_FILES =
+  /^(?:\.eslintrc(?:\..*)?|eslint\.config\.[cm]?[jt]s|\.golangci(?:\..*)?|pyproject\.toml|setup\.cfg|tox\.ini|deny\.toml|\.importlinter|\.dependency-cruiser\.[cm]?js)$/;
+const MANIFEST_NAMES = new Set([
+  "package.json",
+  "Cargo.toml",
+  "go.mod",
+  "Project.toml",
+  "pyproject.toml",
+  "setup.py",
+  "pom.xml",
+  "build.gradle",
+  "build.gradle.kts",
+  "CMakeLists.txt",
+  "mix.exs",
+  "Gemfile",
+  "composer.json",
+  "Package.swift",
+]);
 
 function die(message) {
   process.stderr.write(`scan.mjs: ${message}\n`);
@@ -83,7 +352,7 @@ function parseArgs(argv) {
   const opts = {
     root: undefined,
     scopes: [],
-    minStatements: 2,
+    minLines: 2,
     maxFileBytes: 1024 * 1024,
     ghOwner: undefined,
     out: undefined,
@@ -111,8 +380,8 @@ function parseArgs(argv) {
         opts.scopes.push(needValue(i, "--scope"));
         i += 1;
         break;
-      case "--min-statements":
-        opts.minStatements = needNumber(i, "--min-statements");
+      case "--min-lines":
+        opts.minLines = needNumber(i, "--min-lines");
         i += 1;
         break;
       case "--max-file-bytes":
@@ -158,20 +427,6 @@ function findRoot(explicit) {
   }
 }
 
-/** The `typescript` package of the target repository, or exit 2. */
-function loadTypescript(root) {
-  for (const base of [root, process.cwd()]) {
-    try {
-      return createRequire(join(base, "package.json"))("typescript");
-    } catch {
-      // try the next base
-    }
-  }
-  return die(
-    "cannot resolve the `typescript` package from the repository root or the current directory; install it in the target repository and run again"
-  );
-}
-
 function walk(root, dir, files) {
   let entries;
   try {
@@ -194,7 +449,7 @@ function walk(root, dir, files) {
   }
 }
 
-/** Every non-ignored file under the root, relative, sorted. */
+/** Every file git tracks or does not ignore (all files outside git), sorted. */
 function listFiles(root) {
   let files;
   try {
@@ -216,219 +471,790 @@ function listFiles(root) {
   return files.sort();
 }
 
-function readHead(path, bytes) {
-  const fd = openSync(path, "r");
-  try {
-    const buffer = Buffer.alloc(bytes);
-    const n = readSync(fd, buffer, 0, bytes, 0);
-    return buffer.toString("utf8", 0, n);
-  } finally {
-    closeSync(fd);
-  }
+const extOf = (file) => file.slice(file.lastIndexOf(".") + 1).toLowerCase();
+
+// ---------------------------------------------------------------- tokenizer
+
+const IDENT = /[\p{L}_$][\p{L}\p{N}_$]*/uy;
+const NUMBER = /\d[\w.]*/y;
+const CHAR_LITERAL =
+  /'(?:\\(?:x[0-9a-fA-F]{2}|u\{[0-9a-fA-F]+\}|u[0-9a-fA-F]{4}|.)|[^\\'\n])'/y;
+
+function matchAt(regex, text, i) {
+  regex.lastIndex = i;
+  const m = regex.exec(text);
+  return m === null ? null : m[0];
 }
 
 /**
- * Leaf tokens of a node in source order. Comments and whitespace are trivia, so
- * they are absent; string, template, and regex literals keep their full text.
+ * End offset of a regex literal that starts at `i`, or -1 when the slash is a
+ * division. A slash starts a regex after an operator or a few keywords.
  */
-function leaves(ts, node, sf, out) {
-  if (
-    node.kind >= ts.SyntaxKind.FirstJSDocNode &&
-    node.kind <= ts.SyntaxKind.LastJSDocNode
+function regexEnd(text, i, toks) {
+  const prev = [...toks].reverse().find((t) => t.k !== "com");
+  const allowed =
+    prev === undefined ||
+    (prev.k === "op" && ![")", "]", "}"].includes(prev.t)) ||
+    (prev.k === "id" &&
+      ["return", "typeof", "case", "in", "of", "void"].includes(prev.t));
+  if (!allowed) {
+    return -1;
+  }
+  let inClass = false;
+  for (let k = i + 1; k < text.length && text[k] !== "\n"; k += 1) {
+    if (text[k] === "\\") {
+      k += 1;
+    } else if (text[k] === "[") {
+      inClass = true;
+    } else if (text[k] === "]") {
+      inClass = false;
+    } else if (text[k] === "/" && !inClass) {
+      let end = k + 1;
+      while (end < text.length && /[a-z]/i.test(text[end])) {
+        end += 1;
+      }
+      return end;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Tokens of a source text: identifiers, numbers, strings, operators, and
+ * comments (kind "com"). Strings keep their full text, so comment markers
+ * inside them do not matter. Each token records its line, its column, whether
+ * it is first on its line, and whether a line break precedes it.
+ */
+function tokenize(text, lang) {
+  const toks = [];
+  const n = text.length;
+  let i = 0;
+  let line = 1;
+  let lineStart = 0;
+  let lastCodeEnd = 0;
+  let lastLine = 0;
+
+  const advance = (to) => {
+    for (let k = i; k < to; k += 1) {
+      if (text.charCodeAt(k) === 10) {
+        line += 1;
+        lineStart = k + 1;
+      }
+    }
+    i = to;
+  };
+  const emit = (k, start, end, startLine, startCol) => {
+    const tok = {
+      k,
+      t: text.slice(start, end),
+      s: start,
+      e: end,
+      line: startLine,
+      col: startCol,
+      first: lastLine !== startLine,
+      nl: k !== "com" && text.slice(lastCodeEnd, start).includes("\n"),
+    };
+    toks.push(tok);
+    if (k !== "com") {
+      lastCodeEnd = end;
+      lastLine = line;
+    }
+  };
+  const findClose = (from, close, escapes) => {
+    let k = from;
+    while (k < n) {
+      if (escapes && text[k] === "\\") {
+        k += 2;
+      } else if (text.startsWith(close, k)) {
+        return k + close.length;
+      } else {
+        k += 1;
+      }
+    }
+    return n;
+  };
+
+  while (i < n) {
+    const c = text[i];
+    if (c === " " || c === "\t" || c === "\r" || c === "\n" || c === "\f") {
+      advance(i + 1);
+      continue;
+    }
+    const start = i;
+    const startLine = line;
+    const startCol = i - lineStart;
+
+    const block = lang.block.find(([open]) => text.startsWith(open, i));
+    if (block !== undefined) {
+      const [open, close] = block;
+      let depth = 1;
+      let k = i + open.length;
+      while (k < n && depth > 0) {
+        if (lang.nestBlock && text.startsWith(open, k)) {
+          depth += 1;
+          k += open.length;
+        } else if (text.startsWith(close, k)) {
+          depth -= 1;
+          k += close.length;
+        } else {
+          k += 1;
+        }
+      }
+      advance(k);
+      emit("com", start, k, startLine, startCol);
+      continue;
+    }
+    if (lang.line.some((p) => text.startsWith(p, i))) {
+      let k = text.indexOf("\n", i);
+      k = k === -1 ? n : k;
+      advance(k);
+      emit("com", start, k, startLine, startCol);
+      continue;
+    }
+    if (c === "/" && lang.regex) {
+      const end = regexEnd(text, i, toks);
+      if (end !== -1) {
+        advance(end);
+        emit("str", start, end, startLine, startCol);
+        continue;
+      }
+    }
+    const triple = (lang.triple ?? []).find((q) => text.startsWith(q, i));
+    if (triple !== undefined) {
+      const end = findClose(i + 3, triple, true);
+      advance(end);
+      emit("str", start, end, startLine, startCol);
+      continue;
+    }
+    if (lang.char === c) {
+      const lit = matchAt(CHAR_LITERAL, text, i);
+      if (lit !== null) {
+        advance(i + lit.length);
+        emit("str", start, i, startLine, startCol);
+      } else {
+        advance(i + 1);
+        emit("op", start, i, startLine, startCol);
+      }
+      continue;
+    }
+    if (lang.strs.includes(c)) {
+      const raw = lang.rawBacktick && c === "`";
+      let k = i + 1;
+      const multiline = c === "`";
+      while (k < n) {
+        if (!raw && text[k] === "\\") {
+          k += 2;
+        } else if (text[k] === c) {
+          k += 1;
+          break;
+        } else if (text[k] === "\n" && !multiline) {
+          break;
+        } else {
+          k += 1;
+        }
+      }
+      k = Math.min(k, n);
+      advance(k);
+      emit("str", start, k, startLine, startCol);
+      continue;
+    }
+    const num = /\d/.test(c) ? matchAt(NUMBER, text, i) : null;
+    if (num !== null) {
+      advance(i + num.length);
+      emit("num", start, i, startLine, startCol);
+      continue;
+    }
+    const id = matchAt(IDENT, text, i);
+    if (id !== null) {
+      let end = i + id.length;
+      if (lang.bang && (text[end] === "?" || text[end] === "!") && text[end + 1] !== "=") {
+        end += 1;
+      }
+      advance(end);
+      emit("id", start, end, startLine, startCol);
+      continue;
+    }
+    const op = OPS.find((o) => text.startsWith(o, i));
+    advance(i + (op === undefined ? 1 : op.length));
+    emit("op", start, i, startLine, startCol);
+  }
+  return toks;
+}
+
+// ------------------------------------------------------- function boundaries
+
+const OPEN_FOR = { "(": ")", "[": "]", "{": "}" };
+const CLOSE_SET = new Set([")", "]", "}"]);
+
+/**
+ * Pairs every bracket with its partner (both directions) and the bracket depth
+ * before each token. Returns null if the brackets do not balance, because a
+ * lexer error (for example an unterminated string) is the usual cause and the
+ * boundaries would be wrong.
+ */
+function pairBrackets(code) {
+  const match = new Array(code.length).fill(-1);
+  const depth = new Array(code.length).fill(0);
+  const stack = [];
+  for (let i = 0; i < code.length; i += 1) {
+    const t = code[i].t;
+    depth[i] = stack.length;
+    if (code[i].k !== "op") {
+      continue;
+    }
+    if (OPEN_FOR[t] !== undefined) {
+      stack.push(i);
+    } else if (CLOSE_SET.has(t)) {
+      const open = stack.pop();
+      if (open === undefined || OPEN_FOR[code[open].t] !== t) {
+        return null;
+      }
+      match[open] = i;
+      match[i] = open;
+      depth[i] = stack.length;
+    }
+  }
+  return stack.length === 0 ? { match, depth } : null;
+}
+
+const isOp = (tok, text) => tok !== undefined && tok.k === "op" && tok.t === text;
+const isId = (tok) => tok !== undefined && tok.k === "id";
+
+/** Index of the first token of the header line, stopping at a boundary. */
+function headerStart(code, k) {
+  let h = k;
+  while (
+    h > 0 &&
+    !code[h].first &&
+    !(code[h - 1].k === "op" && [";", "{", "}"].includes(code[h - 1].t))
   ) {
-    return out;
+    h -= 1;
   }
-  const children = node.getChildren(sf);
-  if (children.length === 0) {
-    if (node.kind !== ts.SyntaxKind.EndOfFileToken) {
-      const start = node.getStart(sf);
-      const trivia = sf.text.slice(node.pos, start);
-      const previous = out.length > 0 ? out[out.length - 1].text : "";
-      // A line break changes the meaning after these tokens (automatic
-      // semicolon insertion), so it is kept as a token there and only there.
-      const breaks =
-        /[\n\r\u2028\u2029]/.test(trivia) &&
-        (ASI_SENSITIVE.has(previous) || node.getText(sf) === "++" || node.getText(sf) === "--");
-      out.push({ start, text: node.getText(sf), trivia, breaks });
-    }
-  } else {
-    for (const child of children) {
-      leaves(ts, child, sf, out);
-    }
-  }
-  return out;
+  return h;
 }
 
-/**
- * Every named function with a block body: declarations, methods, and arrow or
- * function expressions bound to a variable. Nested ones are included because
- * duplicated closures are common inside constructors and factories.
- */
-function unitsOf(ts, root, rel, opts) {
+/** Skips a balanced `<...>` or `[...]` after a name; returns the next index. */
+function skipGenerics(code, match, j, lang) {
+  if (isOp(code[j], "<")) {
+    let depth = 0;
+    for (let k = j; k < code.length && k < j + 60; k += 1) {
+      const t = code[k].t;
+      if (code[k].k === "op" && (t === ";" || t === "{" || t === "(")) {
+        return j;
+      }
+      t === "<" && code[k].k === "op" && (depth += 1);
+      t === ">" && code[k].k === "op" && (depth -= 1);
+      if (depth === 0) {
+        return k + 1;
+      }
+    }
+    return j;
+  }
+  if (lang.receiver && isOp(code[j], "[")) {
+    return match[j] + 1;
+  }
+  return j;
+}
+
+/** Brace-family boundaries: function keyword, method-shaped, and arrow forms. */
+function braceUnits(code, match, lang) {
+  const units = [];
+  const seen = new Set();
+  const add = (nameIdx, openIdx, hs) => {
+    if (seen.has(nameIdx) || match[openIdx] === -1) {
+      return;
+    }
+    seen.add(nameIdx);
+    units.push({
+      nameIdx,
+      hs: headerStart(code, hs),
+      bodyFrom: openIdx + 1,
+      bodyTo: match[openIdx],
+      sigTo: openIdx,
+    });
+  };
+
+  const findOpenAfterParams = (from, allowParens) => {
+    for (let k = from; k < code.length && k < from + 80; k += 1) {
+      const tok = code[k];
+      if (tok.k !== "op") {
+        continue;
+      }
+      if (tok.t === "{") {
+        return k;
+      }
+      if (tok.t === ";" || tok.t === "}" || tok.t === "=" || tok.t === "=>") {
+        return -1;
+      }
+      if (!allowParens && (tok.t === "(" || tok.t === ")")) {
+        return -1;
+      }
+    }
+    return -1;
+  };
+
+  for (let i = 0; i < code.length; i += 1) {
+    const tok = code[i];
+    if (tok.k !== "id") {
+      if (lang.arrows && isOp(tok, "=>") && isOp(code[i + 1], "{")) {
+        let k = i - 1;
+        let name = -1;
+        for (; k >= 0 && k > i - 40; k -= 1) {
+          const t = code[k];
+          if (t.k === "op" && CLOSE_SET.has(t.t)) {
+            k = match[k];
+            continue;
+          }
+          if (t.k === "op" && (t.t === ";" || t.t === "{" || t.t === "}" || t.t === "(" || t.t === "[" || t.t === ",")) {
+            break;
+          }
+          if (isOp(t, "=")) {
+            name = isId(code[k - 1]) ? k - 1 : -1;
+            break;
+          }
+        }
+        name !== -1 && add(name, i + 1, name);
+      }
+      continue;
+    }
+    if (lang.fn.includes(tok.t)) {
+      let j = i + 1;
+      lang.receiver && isOp(code[j], "(") && (j = match[j] + 1);
+      isOp(code[j], "*") && (j += 1);
+      let name = -1;
+      if (isId(code[j])) {
+        name = j;
+        j += 1;
+      } else if (
+        lang.arrows &&
+        isOp(code[j], "(") &&
+        isOp(code[i - 1], "=") &&
+        isId(code[i - 2])
+      ) {
+        name = i - 2;
+      }
+      if (name === -1) {
+        continue;
+      }
+      j = skipGenerics(code, match, j, lang);
+      if (!isOp(code[j], "(")) {
+        continue;
+      }
+      const open = findOpenAfterParams(match[j] + 1, true);
+      open !== -1 && add(name, open, i);
+      continue;
+    }
+    if (CONTROL.has(tok.t) && isOp(code[i + 1], "(")) {
+      i = match[i + 1];
+      continue;
+    }
+    if (
+      lang.methods &&
+      isOp(code[i + 1], "(") &&
+      !CONTROL.has(tok.t) &&
+      !["async", "await", "function", "typeof", "new", "delete"].includes(tok.t) &&
+      !isOp(code[i - 1], ".") &&
+      !(isId(code[i - 1]) && code[i - 1].t === "new")
+    ) {
+      const open = findOpenAfterParams(match[i + 1] + 1, false);
+      open !== -1 && add(i, open, i);
+    }
+  }
+  return units;
+}
+
+/** Python-style boundaries: the body is the lines indented past the `def`. */
+function indentUnits(code, match, depth, lang) {
+  const units = [];
+  for (let i = 0; i < code.length; i += 1) {
+    if (!(isId(code[i]) && lang.fn.includes(code[i].t))) {
+      continue;
+    }
+    const defTok = code[i - 1]?.t === "async" && code[i - 1].first ? code[i - 1] : code[i];
+    if (!defTok.first && defTok === code[i]) {
+      continue;
+    }
+    const nameIdx = i + 1;
+    if (!isId(code[nameIdx]) || !isOp(code[nameIdx + 1], "(")) {
+      continue;
+    }
+    let colon = -1;
+    for (let k = match[nameIdx + 1] + 1; k < code.length; k += 1) {
+      if (isOp(code[k], ":") && depth[k] === 0) {
+        colon = k;
+        break;
+      }
+      if (code[k].first && code[k].col <= defTok.col) {
+        break;
+      }
+    }
+    if (colon === -1) {
+      continue;
+    }
+    let end = colon + 1;
+    while (
+      end < code.length &&
+      !(code[end].first && depth[end] === 0 && code[end].col <= defTok.col)
+    ) {
+      end += 1;
+    }
+    if (end === colon + 1) {
+      continue;
+    }
+    units.push({
+      nameIdx,
+      hs: i - (defTok === code[i] ? 0 : 1),
+      bodyFrom: colon + 1,
+      bodyTo: end,
+      sigTo: colon + 1,
+      indent: true,
+      baseCol: code.slice(colon + 1, end).find((t) => t.first)?.col ?? defTok.col + 4,
+    });
+  }
+  return units;
+}
+
+/** `end`-keyword boundaries (Julia, Ruby): count block openers to the `end`. */
+function endUnits(code, match, depth, lang) {
+  const units = [];
+  const lineFirst = new Map();
+  for (const tok of code) {
+    tok.first && lineFirst.set(tok.line, tok.t);
+  }
+  const opens = new Set(lang.open);
+  const modifiers = new Set(lang.modifiers ?? []);
+  for (let i = 0; i < code.length; i += 1) {
+    if (!(isId(code[i]) && lang.fn.includes(code[i].t) && code[i].first)) {
+      continue;
+    }
+    // Header: the name is the last identifier before the parameter list.
+    let k = i + 1;
+    let nameIdx = -1;
+    while (k < code.length && !code[k].nl && !(isOp(code[k], "(") || isOp(code[k], "{"))) {
+      isId(code[k]) && (nameIdx = k);
+      k += 1;
+    }
+    if (nameIdx === -1) {
+      continue;
+    }
+    let headEnd = k;
+    if (isOp(code[k], "(")) {
+      headEnd = match[k] + 1;
+    }
+    while (headEnd < code.length && !code[headEnd].nl) {
+      if (isOp(code[headEnd], "=")) {
+        headEnd = -1;
+        break;
+      }
+      headEnd += 1;
+    }
+    if (headEnd === -1 || headEnd >= code.length) {
+      continue;
+    }
+    let count = 1;
+    let close = -1;
+    for (let m = headEnd; m < code.length; m += 1) {
+      const tok = code[m];
+      if (tok.k !== "id" || depth[m] > 0) {
+        continue;
+      }
+      if (tok.t === "end") {
+        count -= 1;
+        if (count === 0) {
+          close = m;
+          break;
+        }
+      } else if (opens.has(tok.t)) {
+        // A modifier form (`x if y`) follows an expression; a block opener
+        // starts a line or follows an operator such as `=`.
+        const prev = code[m - 1];
+        const expressionPosition =
+          prev !== undefined &&
+          prev.k === "op" &&
+          ![")", "]", "}"].includes(prev.t);
+        if (modifiers.has(tok.t) && !tok.first && !expressionPosition) {
+          continue;
+        }
+        if (tok.t === "do" && ["while", "until", "for"].includes(lineFirst.get(tok.line))) {
+          continue;
+        }
+        count += 1;
+      }
+    }
+    if (close === -1) {
+      continue;
+    }
+    units.push({
+      nameIdx,
+      hs: i,
+      bodyFrom: headEnd,
+      bodyTo: close,
+      sigTo: headEnd,
+    });
+  }
+  return units;
+}
+
+// ------------------------------------------------------------------ per file
+
+/** Visibility by language convention: "exported", "internal", or "unknown". */
+function visibilityOf(langId, unit, source) {
+  const head = unit.header;
+  const name = unit.name;
+  switch (langId) {
+    case "js": {
+      if (head.includes("export")) {
+        return "exported";
+      }
+      const escaped = name.replace(/\$/g, "\\$");
+      return /\bmodule\.exports\b|\bexports[.[]/.test(source) ||
+        new RegExp(`\\bexport\\s*\\{[^}]*\\b${escaped}\\b`).test(source) ||
+        new RegExp(`\\bexport\\s+default\\s+${escaped}\\b`).test(source)
+        ? "exported"
+        : unit.kind === "method"
+          ? "unknown"
+          : "internal";
+    }
+    case "go":
+      return /^\p{Lu}/u.test(name) ? "exported" : "internal";
+    case "rs":
+      // A function in a trait or impl block takes its visibility from the
+      // block, which this script does not read.
+      return head.includes("pub")
+        ? "exported"
+        : unit.col > 0
+          ? "unknown"
+          : "internal";
+    case "py":
+    case "jl":
+    case "rb":
+      return name.startsWith("_") ? "internal" : "exported";
+    case "java":
+    case "kt":
+    case "cs":
+      return head.includes("private") ? "internal" : "exported";
+    case "c":
+    case "cpp":
+      return head.includes("static") ? "internal" : "exported";
+    default:
+      return "unknown";
+  }
+}
+
+function unitsOf(root, rel, langId, opts) {
+  const lang = LANGS[langId];
   const abs = join(root, rel);
-  const stat = lstatSync(abs);
-  if (stat.size > opts.maxFileBytes) {
+  if (lstatSync(abs).size > opts.maxFileBytes) {
     return { units: [], skipped: `${rel}: larger than ${opts.maxFileBytes} bytes` };
   }
-  if (GENERATED_MARKER.test(readHead(abs, 512))) {
+  const source = readFileSync(abs, "utf8");
+  if (GENERATED_MARKER.test(source.slice(0, 512))) {
     return { units: [], skipped: undefined };
   }
-  const source = readFileSync(abs, "utf8");
-  const sf = ts.createSourceFile(rel, source, ts.ScriptTarget.Latest, true);
-  if (sf.parseDiagnostics?.length > 0) {
-    return { units: [], skipped: `${rel}: parse errors, not compared` };
+  const all = tokenize(source, lang);
+  const code = all.filter((t) => t.k !== "com");
+  const comments = all.filter((t) => t.k === "com");
+  const paired = pairBrackets(code);
+  if (paired === null) {
+    return { units: [], skipped: `${rel}: brackets do not balance, not compared` };
   }
+  const { match, depth } = paired;
+  const raw =
+    lang.family === BRACE
+      ? braceUnits(code, match, lang)
+      : lang.family === INDENT
+        ? indentUnits(code, match, depth, lang)
+        : endUnits(code, match, depth, lang);
+
+  const render = (list, baseCol) =>
+    list
+      .map((t) => {
+        const mark = !lang.newlines
+          ? ""
+          : baseCol !== undefined && t.first
+            ? `\n${t.col - baseCol}`
+            : t.nl
+              ? "\n"
+              : "";
+        return mark + t.t;
+      })
+      .join(" ");
+
   const found = [];
-
-  // Names exported by `export { f }` or `export default f`. A file that
-  // assigns to CommonJS exports counts every function as exported, because the
-  // assigned names are not tracked.
-  const listed = new Map();
-  const commonjs = /\b(?:module\.exports|exports(?:\.[A-Za-z_$]|\[))/.test(source);
-  for (const statement of sf.statements) {
-    if (
-      ts.isExportDeclaration(statement) &&
-      statement.moduleSpecifier === undefined &&
-      statement.exportClause !== undefined &&
-      ts.isNamedExports(statement.exportClause)
-    ) {
-      for (const element of statement.exportClause.elements) {
-        const local = (element.propertyName ?? element.name).text;
-        listed.set(local, [...(listed.get(local) ?? []), element.name.text]);
-      }
-    } else if (
-      ts.isExportAssignment(statement) &&
-      ts.isIdentifier(statement.expression)
-    ) {
-      listed.set(statement.expression.text, listed.get(statement.expression.text) ?? []);
+  for (const u of raw) {
+    const body = code.slice(u.bodyFrom, u.bodyTo);
+    const lines = new Set(
+      body.filter((t) => !(t.k === "op" && CLOSERS.has(t.t)) && t.t !== "end").map((t) => t.line)
+    ).size;
+    if (lines < opts.minLines) {
+      continue;
     }
+    const first = code[u.hs];
+    const last = code[Math.max(u.bodyTo - (u.indent ? 1 : 0), u.bodyFrom - 1)] ?? first;
+    const prevEnd = u.hs > 0 ? code[u.hs - 1].e : 0;
+    const bodyEnd = u.indent ? code[u.bodyTo - 1].e : (code[u.bodyTo]?.e ?? last.e);
+    const header = code.slice(u.hs, u.sigTo).map((t) => t.t);
+    const name = code[u.nameIdx].t;
+    const unit = {
+      file: rel,
+      lang: langId,
+      line: first.line,
+      col: first.col,
+      name,
+      kind:
+        lang.family === BRACE && !lang.fn.includes(code[u.hs].t) && !header.includes("=>") && !header.includes("function")
+          ? "method"
+          : "function",
+      header,
+      lines,
+      start: first.s,
+      end: bodyEnd,
+      signature: render(code.slice(u.hs, u.sigTo)),
+      body: render(body, u.indent ? u.baseCol : undefined),
+      deliberate: comments.some(
+        (c) => c.s >= prevEnd && c.e <= bodyEnd && DELIBERATE_MARKER.test(c.t)
+      ),
+    };
+    found.push(unit);
   }
-  const isExported = (node, name) =>
-    commonjs ||
-    listed.has(name) ||
-    (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Export) !== 0;
-  const render = (list) =>
-    list.map((t) => (t.breaks ? "\n" : "") + t.text).join(" ");
-
-  const visit = (node) => {
-    let name;
-    let body;
-    let exported = false;
-    if (ts.isFunctionDeclaration(node) && node.body && node.name) {
-      name = node.name.text;
-      body = node.body;
-      exported = isExported(node, name);
-    } else if (ts.isMethodDeclaration(node) && node.body && node.name) {
-      name = node.name.getText(sf);
-      body = node.body;
-      exported =
-        !ts.isPrivateIdentifier(node.name) &&
-        // A method of an object literal is treated as exported, since the
-        // object may be exported or passed out.
-        (!ts.isClassLike(node.parent) ||
-        (commonjs ||
-          (node.parent.name !== undefined &&
-            listed.has(node.parent.name.text)) ||
-          (ts.getCombinedModifierFlags(node.parent) &
-            ts.ModifierFlags.Export) !==
-            0)) &&
-        (ts.getCombinedModifierFlags(node) &
-          (ts.ModifierFlags.Private | ts.ModifierFlags.Protected)) ===
-          0;
-    } else if (
-      ts.isVariableDeclaration(node) &&
-      ts.isIdentifier(node.name) &&
-      node.initializer &&
-      (ts.isArrowFunction(node.initializer) ||
-        ts.isFunctionExpression(node.initializer)) &&
-      ts.isBlock(node.initializer.body)
-    ) {
-      name = node.name.text;
-      body = node.initializer.body;
-      exported = isExported(node, name);
-    }
-    if (body !== undefined && body.statements.length >= opts.minStatements) {
-      const start = node.getStart(sf);
-      const tokens = leaves(ts, node, sf, []);
-      const bodyStart = body.getStart(sf);
-      const signature = render(tokens.filter((t) => t.start < bodyStart));
-      found.push({
-        file: rel,
-        line: sf.getLineAndCharacterOfPosition(start).line + 1,
-        name,
-        exported,
-        aliases: listed.get(name) ?? [],
-        statements: body.statements.length,
-        start,
-        end: node.getEnd(),
-        signature,
-        body: render(
-          tokens.filter((t) => t.start >= bodyStart && t.start < body.getEnd())
-        ),
-        // Only comments count, so a string literal cannot trigger a refusal.
-        deliberate: tokens.some(
-          (t) => t.start < body.getEnd() && DELIBERATE_MARKER.test(t.trivia)
-        ),
-      });
-    }
-    ts.forEachChild(node, visit);
-  };
-  ts.forEachChild(sf, visit);
+  for (const u of found) {
+    const nested = found.some(
+      (o) => o !== u && o.start <= u.start && o.end >= u.end && (o.start < u.start || o.end > u.end)
+    );
+    u.visibility = nested ? "internal" : visibilityOf(langId, u, source);
+  }
   return { units: found, skipped: undefined };
 }
 
-function readJson(path) {
-  try {
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    return undefined;
+// ----------------------------------------------------------------- packages
+
+const unquote = (s) => s.replace(/^["']|["']$/g, "");
+
+function sectionKeys(text, sections) {
+  const keys = new Set();
+  let current = "";
+  for (const line of text.split("\n")) {
+    const header = /^\s*\[([^\]]+)\]\s*$/.exec(line);
+    if (header !== null) {
+      current = header[1].trim();
+      const sub = /^(dev-dependencies|dependencies|build-dependencies)\.(.+)$/.exec(current);
+      sub !== null && sections.includes(sub[1]) && keys.add(sub[2].trim());
+      continue;
+    }
+    const key = /^\s*([A-Za-z0-9_.-]+)\s*=/.exec(line);
+    key !== null && sections.includes(current) && keys.add(key[1]);
   }
+  return keys;
 }
 
-/** Nearest `package.json` at or above a file, up to the root. */
-function makePackageResolver(root) {
+function readManifest(root, dir, names) {
+  const read = (n) => {
+    try {
+      return readFileSync(join(root, dir, n), "utf8");
+    } catch {
+      return undefined;
+    }
+  };
+  const fallback = { name: dir === "." ? "(root)" : dir, deps: new Set(), devDeps: new Set(), depsKnown: false };
+  const primary = names.find((n) =>
+    ["package.json", "Cargo.toml", "go.mod", "Project.toml", "pyproject.toml"].includes(n)
+  );
+  if (primary !== undefined && read(primary) === undefined) {
+    return fallback;
+  }
+  if (names.includes("package.json")) {
+    try {
+      const json = JSON.parse(read("package.json"));
+      return {
+        name: json.name ?? fallback.name,
+        deps: new Set([...Object.keys(json.dependencies ?? {}), ...Object.keys(json.peerDependencies ?? {})]),
+        devDeps: new Set(Object.keys(json.devDependencies ?? {})),
+        depsKnown: true,
+      };
+    } catch {
+      return fallback;
+    }
+  }
+  if (names.includes("Cargo.toml")) {
+    const text = read("Cargo.toml") ?? "";
+    const name = /^\s*name\s*=\s*"([^"]+)"/m.exec(text.split(/^\[dependencies/m)[0]);
+    return {
+      name: name?.[1] ?? fallback.name,
+      deps: sectionKeys(text, ["dependencies", "build-dependencies"]),
+      devDeps: sectionKeys(text, ["dev-dependencies"]),
+      depsKnown: true,
+    };
+  }
+  if (names.includes("go.mod")) {
+    const text = read("go.mod") ?? "";
+    const deps = new Set();
+    for (const m of text.matchAll(/^\s*(?:require\s+)?([^\s()]+)\s+v[\w.+-]+/gm)) {
+      deps.add(m[1]);
+    }
+    return {
+      name: /^module\s+(\S+)/m.exec(text)?.[1] ?? fallback.name,
+      deps,
+      devDeps: new Set(),
+      depsKnown: true,
+    };
+  }
+  if (names.includes("Project.toml")) {
+    const text = read("Project.toml") ?? "";
+    return {
+      name: unquote(/^\s*name\s*=\s*(\S+)/m.exec(text)?.[1] ?? fallback.name),
+      deps: sectionKeys(text, ["deps"]),
+      devDeps: new Set(),
+      depsKnown: true,
+    };
+  }
+  if (names.includes("pyproject.toml")) {
+    const text = read("pyproject.toml") ?? "";
+    const norm = (s) => s.toLowerCase().replace(/_/g, "-");
+    const list = /^\s*dependencies\s*=\s*\[([\s\S]*?)\]/m.exec(text)?.[1] ?? "";
+    return {
+      name: norm(unquote(/^\s*name\s*=\s*(\S+)/m.exec(text)?.[1] ?? fallback.name)),
+      deps: new Set([...list.matchAll(/["']([A-Za-z0-9_.-]+)/g)].map((m) => norm(m[1]))),
+      devDeps: new Set(),
+      depsKnown: true,
+    };
+  }
+  return fallback;
+}
+
+function makePackageResolver(root, files) {
+  const byDir = new Map();
+  for (const f of files) {
+    const base = f.slice(f.lastIndexOf("/") + 1);
+    if (MANIFEST_NAMES.has(base) || /\.csproj$/.test(base)) {
+      const dir = dirname(f);
+      byDir.set(dir, [...(byDir.get(dir) ?? []), base]);
+    }
+  }
   const cache = new Map();
-  const packageOf = (file) => {
+  return (file) => {
     let dir = dirname(file);
     for (;;) {
-      if (!cache.has(dir)) {
-        const manifest = join(root, dir, "package.json");
-        const json = existsSync(manifest) ? readJson(manifest) : undefined;
-        const deps = new Set([
-          ...Object.keys(json?.dependencies ?? {}),
-          ...Object.keys(json?.peerDependencies ?? {}),
-        ]);
-        const devDeps = new Set(Object.keys(json?.devDependencies ?? {}));
-        cache.set(
-          dir,
-          json === undefined
-            ? null
-            : {
-                dir,
-                name: json.name ?? (dir === "." ? "(root)" : dir),
-                deps,
-                devDeps,
-              }
-        );
-      }
-      if (cache.get(dir) !== null) {
+      if (byDir.has(dir)) {
+        cache.has(dir) || cache.set(dir, { dir, ...readManifest(root, dir, byDir.get(dir)) });
         return cache.get(dir);
       }
       if (dir === ".") {
-        return { dir: ".", name: "(no package.json)", deps: new Set(), devDeps: new Set() };
+        return { dir: ".", name: "(no manifest)", deps: new Set(), devDeps: new Set(), depsKnown: false };
       }
       dir = dirname(dir);
     }
   };
-  return packageOf;
 }
+
+const isTestFile = (file) =>
+  /(?:^|\/)(?:__tests__|tests?|spec)\/|(?:\.|_)(?:test|spec)\.[a-z]+$|(?:^|\/)test_[^/]*\.py$|_test\.[a-z]+$|Tests?\.(?:java|kt|cs)$|(?:^|\/)src\/test\//.test(file);
 
 /**
  * Where a shared function could live. Inside one package it always can.
  * Across packages the host has to be one the others already depend on, since a
- * new package edge is a different decision from removing a duplicate. A
- * devDependency counts only when every member is a test file, because
- * production code cannot import a dev-only package at run time.
+ * new package edge is a different decision from removing a duplicate. A dev
+ * dependency counts only when every member is a test file. A manifest format
+ * this script does not read gives no answer, and the group is refused.
  */
 function sharedHome(members, packageOf) {
   const pkgs = new Map();
@@ -440,58 +1266,49 @@ function sharedHome(members, packageOf) {
   if (entries.length === 1) {
     return { ok: true, host: entries[0].name, why: `one package, ${entries[0].name}` };
   }
+  const unread = entries.filter((p) => !p.depsKnown);
+  if (unread.length > 0) {
+    return {
+      ok: false,
+      why: `dependencies of ${unread.map((p) => p.name).join(", ")} are not readable from its manifest, so no host is verified`,
+    };
+  }
   const testsOnly = members.every((m) => isTestFile(m.file));
   const depends = (other, candidate) =>
-    other.deps.has(candidate.name) ||
-    (testsOnly && other.devDeps.has(candidate.name));
-  const host = entries.find((candidate) =>
-    entries.every((other) => other === candidate || depends(other, candidate))
-  );
+    other.deps.has(candidate.name) || (testsOnly && other.devDeps.has(candidate.name));
+  const host = entries.find((c) => entries.every((o) => o === c || depends(o, c)));
   if (host === undefined) {
     return {
       ok: false,
       why: `${entries.map((p) => p.name).join(" and ")} declare no dependency on each other`,
     };
   }
-  return {
-    ok: true,
-    host: host.name,
-    why: `${host.name}, which the others already depend on`,
-  };
+  return { ok: true, host: host.name, why: `${host.name}, which the others already depend on` };
 }
 
-/** Layering configs and docs found at runtime, for the reviewer to read. */
+// ------------------------------------------------------------- conventions
+
 function discoverConventions(root, files) {
   const base = (f) => f.slice(f.lastIndexOf("/") + 1);
-  const eslint = files.filter((f) =>
-    /^(?:\.eslintrc(?:\..*)?|eslint\.config\.[cm]?[jt]s)$/.test(base(f))
-  );
+  const readText = (f) => {
+    try {
+      return readFileSync(join(root, f), "utf8");
+    } catch {
+      return "";
+    }
+  };
   const layeringConfigs = [
-    ...eslint.filter((f) => {
-      try {
-        return LAYERING_CONFIG.test(readFileSync(join(root, f), "utf8"));
-      } catch {
-        return false;
-      }
-    }),
-    ...files.filter(
-      (f) =>
-        /^(?:layers?\.(?:[cm]?js|json|ts)|\.dependency-cruiser\.[cm]?js)$/.test(
-          base(f)
-        )
-    ),
+    ...files.filter((f) => LAYERING_CONFIG_FILES.test(base(f)) && LAYERING_CONFIG.test(readText(f))),
+    ...files.filter((f) => /^(?:layers?\.[a-z]+|\.dependency-cruiser\.[cm]?js|\.importlinter)$/.test(base(f))),
   ];
-  const rootManifest = readJson(join(root, "package.json"));
   return {
-    workspaces: rootManifest?.workspaces ?? null,
-    tsconfigs: files.filter((f) => /^tsconfig.*\.json$/.test(base(f))).slice(0, 50),
-    eslintConfigs: eslint,
-    layeringConfigs,
+    manifests: files.filter((f) => MANIFEST_NAMES.has(base(f)) || /\.csproj$/.test(base(f))).slice(0, 100),
+    workspaces: files.filter((f) => ["go.work", "pnpm-workspace.yaml", "lerna.json"].includes(base(f))),
+    layeringConfigs: [...new Set(layeringConfigs)],
   };
 }
 
-function docsNear(files, member) {
-  const fileSet = new Set(files);
+function docsNear(fileSet, member) {
   const found = [];
   let dir = dirname(member.file);
   for (;;) {
@@ -506,52 +1323,40 @@ function docsNear(files, member) {
   }
 }
 
+// --------------------------------------------------------------- consumers
+
 /**
- * Callers of the exported names in a group. In-repo search is
- * `git grep -w --untracked`, which matches by spelling only, so a same-named
+ * Callers of the names in a group that are not internal. In-repo search is
+ * `git grep -ow --untracked`, which matches by spelling only, so a same-named
  * symbol elsewhere gives hits that are not callers. In a member's own file, a
  * hit counts only when the name occurs more often than the file declares it.
  * External search needs `--gh-owner` and an authenticated `gh`. Anything that
  * could not be searched reports `unknown`.
  */
 function consumers(root, group, opts) {
-  const exportedNames = [
-    ...new Set(
-      group.filter((m) => m.exported).flatMap((m) => [m.name, ...m.aliases])
-    ),
-  ];
-  if (exportedNames.length === 0) {
+  const names = [...new Set(group.filter((m) => m.visibility !== "internal").map((m) => m.name))];
+  if (names.length === 0) {
     return { verdict: "internal-only", detail: "no member is exported" };
   }
   const details = [];
-  let unknown = false;
+  let unknown = group.some((m) => m.visibility === "unknown");
+  unknown && details.push("visibility of a member is not known from its language rules");
   let hits = false;
-  for (const name of exportedNames) {
-    if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)) {
-      details.push(`${name}: not an identifier, not searched`);
+  for (const name of names) {
+    if (!/^[\p{L}_$][\p{L}\p{N}_$]*[!?]?$/u.test(name)) {
+      details.push(`${name}: not a plain identifier, not searched`);
       unknown = true;
       continue;
     }
     try {
-      const out = gitOutput(root, [
-        "grep",
-        "-ow",
-        "-F",
-        "--untracked",
-        "-e",
-        name,
-      ]);
+      const out = gitOutput(root, ["grep", "-ow", "-F", "--untracked", "-e", name]);
       const counts = new Map();
       for (const line of out.split("\n").filter((l) => l.length > 0)) {
         const file = line.slice(0, line.indexOf(":"));
         counts.set(file, (counts.get(file) ?? 0) + 1);
       }
       const others = [...counts]
-        .filter(
-          ([file, count]) =>
-            count >
-            group.filter((m) => m.file === file && m.name === name).length
-        )
+        .filter(([file, count]) => count > group.filter((m) => m.file === file && m.name === name).length)
         .map(([file]) => file);
       others.length > 0 && (hits = true);
       details.push(
@@ -573,35 +1378,19 @@ function consumers(root, group, opts) {
     try {
       const out = execFileSync(
         "gh",
-        [
-          "search",
-          "code",
-          name,
-          "--owner",
-          opts.ghOwner,
-          "--limit",
-          "5",
-          "--json",
-          "path",
-        ],
+        ["search", "code", name, "--owner", opts.ghOwner, "--limit", "5", "--json", "path"],
         { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 30000 }
       );
       const results = JSON.parse(out);
       results.length > 0 && (hits = true);
-      details.push(
-        `${name}: gh search in ${opts.ghOwner} found ${results.length} hit(s)`
-      );
+      details.push(`${name}: gh search in ${opts.ghOwner} found ${results.length} hit(s)`);
     } catch {
       details.push(`${name}: gh search unavailable or failed`);
       unknown = true;
     }
   }
   return {
-    verdict: unknown
-      ? "unknown"
-      : hits
-        ? "exported-with-hits"
-        : "exported-no-hits",
+    verdict: unknown ? "unknown" : hits ? "exported-with-hits" : "exported-no-hits",
     detail: details.join("; "),
   };
 }
@@ -609,21 +1398,13 @@ function consumers(root, group, opts) {
 /** Whether every member of `group` nests inside a member of `outer`. */
 function nestedIn(group, outer) {
   return group.every((member) =>
-    outer.some(
-      (o) =>
-        o.file === member.file && o.start <= member.start && o.end >= member.end
-    )
+    outer.some((o) => o.file === member.file && o.start <= member.start && o.end >= member.end)
   );
 }
 
-const isTestFile = (file) =>
-  /(?:\.|_)(?:test|spec)\.[cm]?[jt]sx?$|(?:^|\/)(?:__tests__|tests?)\//.test(
-    file
-  );
-
 const compact = (items) => [...new Set(items)].sort();
 
-const isDeclarationFile = (file) => /\.d\.[cm]?ts$/.test(file);
+// -------------------------------------------------------------------- main
 
 function main() {
   const opts = parseArgs(process.argv.slice(2));
@@ -633,42 +1414,53 @@ function main() {
   } catch {
     die(`root does not exist: ${root}`);
   }
-  const ts = loadTypescript(root);
   const files = listFiles(root);
-  const sources = files.filter(
-    (f) => SOURCE_EXT.test(f) && !isDeclarationFile(f)
-  );
+  const fileSet = new Set(files);
   const skipped = [];
+  const languages = {};
+  const unscanned = {};
   const all = [];
-  for (const rel of sources) {
+  for (const rel of files) {
+    const ext = extOf(rel);
+    const langId = LANG_BY_EXT.get(ext);
+    if (langId === undefined) {
+      UNSCANNED_EXT.has(ext) && (unscanned[ext] = (unscanned[ext] ?? 0) + 1);
+      continue;
+    }
+    if (/\.d\.[cm]?ts$/.test(rel)) {
+      continue;
+    }
+    languages[langId] ??= { name: LANGS[langId].name, files: 0, verified: LANGS[langId].verified };
+    languages[langId].files += 1;
     try {
-      const result = unitsOf(ts, root, rel, opts);
+      const result = unitsOf(root, rel, langId, opts);
       result.skipped !== undefined && skipped.push(result.skipped);
       all.push(...result.units);
     } catch (error) {
       skipped.push(`${rel}: ${error.message}`);
     }
   }
+  const scanned = Object.values(languages).reduce((n, l) => n + l.files, 0);
 
+  // Bodies compare only within one language, because the same text in two
+  // languages is not the same function.
   const byBody = new Map();
   for (const unit of all) {
-    const group = byBody.get(unit.body);
-    group === undefined ? byBody.set(unit.body, [unit]) : group.push(unit);
+    const key = `${unit.lang}\u0000${unit.body}`;
+    const group = byBody.get(key);
+    group === undefined ? byBody.set(key, [unit]) : group.push(unit);
   }
   const groups = [...byBody.values()]
     .filter((group) => group.length > 1)
-    .map((group) =>
-      [...group].sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line)
-    )
+    .map((group) => [...group].sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line))
     .sort((a, b) => a[0].file.localeCompare(b[0].file) || a[0].line - b[0].line);
 
   // Scopes are resolved against the root so `.`, `./x`, and absolute paths
   // work. A scope outside the root matches nothing.
   const scopes = opts.scopes.map((s) => relative(root, resolve(root, s)));
   const inScope = (path) =>
-    scopes.length === 0 ||
-    scopes.some((s) => s === "" || path === s || path.startsWith(`${s}/`));
-  const packageOf = makePackageResolver(root);
+    scopes.length === 0 || scopes.some((s) => s === "" || path === s || path.startsWith(`${s}/`));
+  const packageOf = makePackageResolver(root, files);
   const fileKey = (group) => compact(group.map((m) => m.file)).join("|");
   const idOf = (index) =>
     `dup-${index + 1}-${compact(groups[index].map((m) => m.name)).join("-").replace(/[^A-Za-z0-9._-]/g, "")}`;
@@ -699,10 +1491,7 @@ function main() {
     }
     const outerIndex = groups.findIndex(
       (other, j) =>
-        j !== index &&
-        own[j] === null &&
-        other[0].body.length > group[0].body.length &&
-        nestedIn(group, other)
+        j !== index && own[j] === null && other[0].body.length > group[0].body.length && nestedIn(group, other)
     );
     return outerIndex === -1
       ? null
@@ -718,9 +1507,7 @@ function main() {
     }
     const key = fileKey(group);
     const entry = representatives.get(key);
-    entry === undefined
-      ? representatives.set(key, { index, folded: 0 })
-      : (entry.folded += 1);
+    entry === undefined ? representatives.set(key, { index, folded: 0 }) : (entry.folded += 1);
   }
 
   const findings = [];
@@ -731,11 +1518,12 @@ function main() {
     const names = compact(group.map((m) => m.name));
     const home = homes[index];
     const representative = representatives.get(fileKey(group));
-    const statements = group[0].statements;
+    const lines = group[0].lines;
     const where = group.map((m) => `${m.file}:${m.line} ${m.name}`).join(", ");
-    const docs = compact(group.flatMap((m) => docsNear(files, m)));
+    const docs = compact(group.flatMap((m) => docsNear(fileSet, m)));
     const allTests = group.every((m) => isTestFile(m.file));
     const mixesTests = !allTests && group.some((m) => isTestFile(m.file));
+    const unverified = !LANGS[group[0].lang].verified;
 
     let refusal = own[index] ?? nesting[index];
     if (refusal === null && representative.index !== index) {
@@ -744,10 +1532,7 @@ function main() {
     const consumer =
       refusal === null
         ? consumers(root, group, opts)
-        : {
-            verdict: "not-gathered",
-            detail: "group refused before the consumer search",
-          };
+        : { verdict: "not-gathered", detail: "group refused before the consumer search" };
     if (refusal === null && consumer.verdict === "unknown") {
       refusal = `consumer check is unknown, so removing an exported name is not safe to propose: ${consumer.detail}`;
     }
@@ -763,21 +1548,20 @@ function main() {
 
     findings.push({
       id: idOf(index),
+      source: "script",
+      evidence_source: ["text"],
       file: group[0].file,
       line: group[0].line,
-      ...(names.length === 1 && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(names[0])
-        ? { symbol: names[0] }
-        : {}),
+      ...(names.length === 1 ? { symbol: names[0] } : {}),
+      language: LANGS[group[0].lang].name,
       severity:
         refusal !== null
           ? "low"
-          : (representative?.folded ?? 0) > 0 ||
-              group.length > 2 ||
-              statements >= 6
+          : (representative?.folded ?? 0) > 0 || group.length > 2 || lines >= 6
             ? "medium"
             : "low",
       members: group.length,
-      signal: `${group.length} functions share one body, ${statements} statements, identical after comments and whitespace are removed: ${where}`,
+      signal: `${group.length} functions share one body, ${lines} logical lines, identical after comments and whitespace are removed: ${where}`,
       evidence: [
         representative?.index === index && representative.folded > 0
           ? `${representative.folded} further group(s) over the same files fold into this one`
@@ -786,6 +1570,7 @@ function main() {
         `consumers: ${consumer.verdict} (${consumer.detail})`,
         mixesTests ? "the group mixes test files and production files" : null,
         docs.length > 0 ? `docs near the members: ${docs.join(", ")}` : null,
+        unverified ? `${LANGS[group[0].lang].name} boundaries are not exercised by this script's tests; confirm by reading` : null,
       ]
         .filter((e) => e !== null)
         .join(". "),
@@ -801,7 +1586,9 @@ function main() {
     root,
     scope: scopes.length === 0 ? "whole repository" : opts.scopes.join(", "),
     generated_at: new Date().toISOString(),
-    files_scanned: sources.length,
+    files_scanned: scanned,
+    languages,
+    unscanned,
     skipped,
     conventions: discoverConventions(root, files),
     counts: {
@@ -823,13 +1610,14 @@ function main() {
     }
     const rank = { medium: 0, low: 1 };
     const lines = [
-      `duplicate-function-unifier: ${reported} reported, ${document.counts.refused} refused, ${sources.length} source files scanned`,
+      `duplicate-function-unifier: ${reported} reported, ${document.counts.refused} refused, ${scanned} source files scanned`,
       ...findings
         .filter((f) => !f.refused)
-        .sort(
-          (a, b) => rank[a.severity] - rank[b.severity] || b.members - a.members
-        )
+        .sort((a, b) => rank[a.severity] - rank[b.severity] || b.members - a.members)
         .map((f) => `  [${f.severity}] ${f.id} ${f.file}:${f.line}`),
+      ...(Object.keys(unscanned).length > 0
+        ? [`not scanned, read these yourself: ${Object.entries(unscanned).map(([e, n]) => `${e} (${n})`).join(", ")}`]
+        : []),
       `findings written to ${opts.out}`,
     ];
     process.stdout.write(`${lines.join("\n")}\n`);
