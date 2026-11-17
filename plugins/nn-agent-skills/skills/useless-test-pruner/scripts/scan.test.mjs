@@ -1,8 +1,7 @@
 // Run with: node --test plugins/nn-agent-skills/skills/useless-test-pruner/scripts/
 //
-// The scan needs the `typescript` package from the repo under test. These
-// tests skip when it cannot be resolved from a temp directory (set NODE_PATH
-// to a node_modules directory that has it).
+// The scan has no dependency, so these tests need no extra package. Each
+// language row marked `verified` in languages.mjs has a fixture below.
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -18,6 +17,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { LANGUAGES } from "./languages.mjs";
 
 const cli = join(dirname(fileURLToPath(import.meta.url)), "scan.mjs");
 
@@ -32,241 +32,362 @@ function write(dir, files) {
   }
 }
 
-function run(dir, args = [], env = {}) {
-  return spawnSync("node", [cli, "--root", dir, ...args], {
-    cwd: dir,
-    encoding: "utf8",
-    env: { ...process.env, ...env },
-  });
+function run(dir, args = []) {
+  return spawnSync("node", [cli, "--root", dir, ...args], { cwd: dir, encoding: "utf8" });
 }
 
-const probe = spawnSync(
-  "node",
-  ["-e", "require('module').createRequire(process.cwd() + '/x.js')('typescript')"],
-  { cwd: tempDir(), encoding: "utf8" }
-);
-const hasTypeScript = probe.status === 0;
-const needTs = { skip: hasTypeScript ? false : "typescript not resolvable" };
+/** A case whose only assertion sits inside a template literal interpolation. */
+const INTERP = 'it("interp", () => { const s = `${expect(run()).toBe(1)}`; });';
 
-const FIXTURE = {
-  "package.json": JSON.stringify({ name: "fixture", workspaces: ["packages/*"] }),
-  "tsconfig.json": `{
-    // comments are allowed in tsconfig
-    "compilerOptions": { "paths": { "@app/*": ["src/*"] } }
-  }`,
-  "packages/lib/package.json": JSON.stringify({ name: "@fixture/lib" }),
-  "src/code.ts": "export const double = (n: number) => n * 2;\n",
-  "src/code.test.ts": `
-import { double } from "./code";
-import { helperAsserts } from "./shared.test";
-import { parse } from "some-dep";
-import { readFileSync } from "node:fs";
-import { thing } from "@fixture/lib";
-import { aliased } from "@app/code";
-import snap from "./snap";
-
-let total = 0;
-const same = (v: number) => { expect(v).toBe(1); };
-
+/** One fixture per verified language. `expect` lists `stage:case` that must be reported. */
+const FIXTURES = {
+  javascript: {
+    file: "src/a.test.ts",
+    text: `
 describe("a", () => {
-  it("no assertion", () => { [1].map((n) => n + 1); });
-  it("calls an imported symbol only", () => { double(2); });
-  it("asserts through a local helper", () => { same(double(1)); });
-  it("asserts through assert", () => { assert.equal(double(1), 2); });
-  it("asserts through the case context", (t) => { t.ok(double(1)); });
-  it("calls an imported helper", () => { helperAsserts(double(1)); });
-  it("same reference", () => { const r = double(1); expect(r).toEqual(r); });
-  it("same call", () => { expect(double(1)).toEqual(double(1)); });
+  it("no assertion", () => { const x = 1 + 1; });
+  it("calls unknown", () => { run(); });
+  it("local helper", () => { same(1); });
+  it("real", () => { expect(run()).toBe(2); });
+  it("same ref", () => { const r = run(); expect(r).toEqual(r); });
+  it("same call", () => { expect(run(1)).toEqual(run(1)); });
   it("literals", () => { expect(1).toBe(1.0); });
-  it("existence on literal", () => { expect(5).toBeDefined(); });
-  it("any", () => { expect(double(1)).toEqual(expect.anything()); });
-  it("literal that fails", () => { double(1); expect(null).toBeTruthy(); expect(1).toBe(2); });
-  it("snapshot and tautology", () => { expect(double(1)).toMatchSnapshot(); expect(1).toBe(1); });
-  it("not tautology", () => { expect(double(1)).not.toBe(double(1)); });
-  it("real", () => { expect(double(2)).toBe(4); });
-  it("snapshot", () => { expect(double(2)).toMatchSnapshot(); });
-  it("untethered", () => { expect(1 + 1).toEqual(2); });
-  it("dependency", () => { expect(parse("a")).toEqual("a"); });
-  it("filesystem", () => { expect(readFileSync("x", "utf8")).toContain("y"); });
-  it("accumulator", () => { total += 1; expect(total).toBeGreaterThan(0); });
-  it("workspace package", () => { expect(thing()).toBe(1); });
-  it("tsconfig alias", () => { expect(aliased).toBe(1); });
-  it.skip("skip", () => { double(1); });
-  it.todo("todo");
-  xit("xit", () => { double(1); });
-  it("dynamic import", async () => {
-    const { double: d } = await import("./code");
-    expect(d(1) + 1).toBe(3);
-  });
+  it("literals differ", () => { expect(1).toBe(2); });
+  it("not tautology", () => { expect(run()).not.toBe(run()); });
+  it("snapshot", () => { expect(run()).toMatchSnapshot(); expect(1).toBe(1); });
+  it("string mentions expect", () => { const s = "expect(x).toBe(x)"; });
+  ${INTERP}
+  it.skip("skipped", () => { run(); });
+  it.each([[1, 2]])("table %i", (a, b) => { run(a); });
 });
+describe.skip("suite", () => { it("inside", () => { run(); }); });
+function same(v) { expect(v).toBe(1); }
+`,
+    expect: [
+      "A:no assertion",
+      "A:calls unknown",
+      "B:same ref",
+      "B:same call",
+      "B:literals",
+      "A:table %i",
+      "A:string mentions expect",
+    ],
+    absent: ["local helper", "real", "literals differ", "not tautology", "snapshot", "skipped", "inside", "interp"],
+  },
+  python: {
+    file: "tests/test_a.py",
+    text: `
+import pytest
 
-describe.skip("skipped suite", () => {
-  it("inside", () => { double(1); });
-});
+def test_none():
+    x = 1
+
+def test_assert_true():
+    assert True
+
+def test_same():
+    y = f()
+    assert y == y
+
+def test_ok():
+    assert f() == 2
+
+@pytest.mark.skip
+def test_skipped():
+    f()
+
+def helper(v):
+    assert v
+
+def test_via_helper():
+    helper(1)
+
+def test_multi(
+    value,
+):
+    assert value
+
+def test_bigint():
+    assert 9007199254740992 == 9007199254740993
+
+def test_docstring():
+    """assert x == x"""
+    f()
+
+class TestX(unittest.TestCase):
+    def test_eq(self):
+        self.assertEqual(a, a)
 `,
-  "src/shared.test.ts": `
-export function helperAsserts(v: number) { expect(v).toBe(2); }
-it("placeholder", () => { expect(1 + 1).toBe(2); });
+    expect: ["A:test_none", "B:test_assert_true", "B:test_same", "A:test_docstring", "B:test_eq"],
+    absent: ["test_ok", "test_skipped", "test_via_helper", "test_multi", "test_bigint"],
+  },
+  go: {
+    file: "pkg/a_test.go",
+    text: `package pkg
+
+func TestNone(t *testing.T) { x := 1; _ = x }
+
+func TestOk(t *testing.T) {
+	if got := f(); got != 2 {
+		t.Errorf("x")
+	}
+}
+
+func TestTautology(t *testing.T) { assert.Equal(t, a, a) }
+
+func TestSkip(t *testing.T) { t.Skip("x") }
 `,
-  "src/exempt.test.ts": `it("whole tree", () => { double(1); });\n`,
+    expect: ["A:TestNone", "B:TestTautology"],
+    absent: ["TestOk", "TestSkip"],
+  },
+  rust: {
+    file: "src/lib.rs",
+    text: `
+fn compute() -> i32 { 1 }
+
+/* outer /* inner */
+#[test]
+fn ghost() { let x = 1; }
+*/
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn none() { let x = 1 + 1; }
+
+    #[test]
+    fn check_it_only() { let y = compute(); }
+
+    #[test]
+    fn ok() { assert_eq!(f(), 2); }
+
+    #[test]
+    fn same() { assert_eq!(a, a); }
+
+    #[test]
+    #[ignore]
+    fn skipped() { f(); }
+
+    #[test]
+    #[should_panic]
+    fn panics() { f(); }
+}
+`,
+    expect: ["A:none", "A:check_it_only", "B:same"],
+    absent: ["ok", "skipped", "panics", "ghost"],
+  },
+  java: {
+    file: "src/test/java/ATest.java",
+    text: `
+class ATest {
+  @Test void none() { int x = 1; }
+  @Test void ok() { assertEquals(2, f()); }
+  @Test void same() { assertEquals(a, a); }
+  @Test void msg() { assertEquals("m", "m", actual); }
+  @Disabled @Test void skipped() { f(); }
+  @Test(expected = Foo.class) void throwsIt() { f(); }
+}
+`,
+    expect: ["A:none", "B:same"],
+    absent: ["ok", "skipped", "throwsIt", "msg"],
+  },
+  cpp: {
+    file: "tests/a_test.cc",
+    text: `
+TEST(S, None) { int x = 1; }
+TEST(S, Ok) { EXPECT_EQ(f(), 2); }
+TEST(S, Same) { EXPECT_EQ(a, a); }
+TEST(S, DISABLED_Off) { f(); }
+`,
+    expect: ["A:S, None", "B:S, Same"],
+    absent: ["S, Ok", "DISABLED_Off"],
+  },
+  julia: {
+    file: "test/runtests.jl",
+    text: `
+@testset "x" begin
+    y = 1
+end
+@testset "ok" begin
+    @test f() == 2
+end
+@testset "same" begin
+    @test a == a
+end
+@testset "idx" begin
+    v = [1, 2]
+    @test v[end] == 2
+end
+@testset "nested" begin
+    @testset "inner" begin
+        z = 1
+    end
+end
+`,
+    expect: ["A:x", "B:same", "A:inner"],
+    absent: ["ok", "idx"],
+  },
 };
 
-function fixture() {
+const fixtureRepo = () => {
   const dir = tempDir();
-  write(dir, FIXTURE);
-  // A link back to the root would loop a walk that follows symlinks.
-  symlinkSync(dir, join(dir, "src", "loop"));
+  for (const f of Object.values(FIXTURES)) {
+    write(dir, { [f.file]: f.text });
+  }
   return dir;
+};
+
+const keys = (doc, language) =>
+  doc.findings
+    .filter((f) => f.language === language && !f.refused)
+    .map((f) => `${f.stage}:${f.case}`);
+
+test("every verified language row has a fixture and every fixture is verified", () => {
+  const verified = LANGUAGES.filter((l) => l.verified).map((l) => l.id).sort();
+  assert.deepEqual(Object.keys(FIXTURES).sort(), verified);
+});
+
+for (const [language, fixture] of Object.entries(FIXTURES)) {
+  test(`${language}: reports the expected leads and refuses the rest`, () => {
+    const dir = fixtureRepo();
+    const r = run(dir, ["--languages", language]);
+    assert.equal(r.status, 1, r.stderr);
+    const doc = JSON.parse(r.stdout);
+    const got = keys(doc, language).sort();
+    assert.deepEqual(got, [...fixture.expect].sort());
+    for (const name of fixture.absent) {
+      assert.ok(!got.some((k) => k.endsWith(`:${name}`)), `${name} was reported`);
+    }
+  });
 }
 
-const key = (f) => `${f.stage}:${f.signal}`;
-
-test("reports and refuses as designed", needTs, () => {
-  const dir = fixture();
-  const out = join(dir, "out.json");
-  const r = run(dir, ["--exempt", "src/exempt.test.ts", "--out", out]);
+test("findings carry source and evidence source, and the scan writes no repo file", () => {
+  const dir = fixtureRepo();
+  const out = join(tempDir(), "out.json");
+  const r = run(dir, ["--out", out]);
   assert.equal(r.status, 1, r.stderr);
   const doc = JSON.parse(readFileSync(out, "utf8"));
-  const reported = doc.findings.filter((f) => !f.refused);
-  const refused = doc.findings.filter((f) => f.refused);
+  assert.ok(doc.findings.every((f) => f.source === "script" && f.evidence_source === "text"));
+  assert.equal(doc.counts.candidates, doc.counts.reported + doc.counts.refused);
+  const status = spawnSync("find", [dir, "-newer", out, "-type", "f"], { encoding: "utf8" });
+  assert.equal(status.stdout.trim(), "");
+  assert.match(r.stdout, /refused \d+:/);
+});
 
-  const expectedPrefixes = [
-    'A:the case "no assertion" runs an',
-    "B:both sides of the comparison are",
-    "B:an existence matcher that passes",
-    "B:subject and expected value are t",
-    "B:subject and expected value are t",
-    "B:the expected value is expect.any",
-    'C:the case "untethered" asserts w',
-  ];
-  const reportedKeys = reported.map(key).sort();
-  assert.equal(reportedKeys.length, expectedPrefixes.length, reportedKeys.join("\n"));
-  expectedPrefixes.sort().forEach((prefix, i) => {
-    assert.ok(reportedKeys[i].startsWith(prefix), `${reportedKeys[i]} vs ${prefix}`);
-  });
+test("--out inside the repository exits 2 and writes nothing", () => {
+  const dir = fixtureRepo();
+  const r = run(dir, ["--out", join(dir, "reports", "findings.json")]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /inside the repository/);
+  assert.equal(spawnSync("ls", [join(dir, "reports")]).status !== 0, true);
+});
 
-  const severities = Object.fromEntries(reported.map((f) => [f.evidence.slice(0, 30), f.severity]));
-  assert.equal(severities["`expect(double(1)).toEqual(dou"], "medium");
-  assert.equal(severities["`expect(r).toEqual(r)` in \"sam"], "high");
-  assert.ok(reported.filter((f) => f.stage === "C").every((f) => f.severity === "question"));
+test("a --table row cannot claim fixture coverage", () => {
+  const dir = tempDir();
+  write(dir, { "x_test.go": "package a\nfunc TestA(t *testing.T) { y := 1 }\n" });
+  const table = join(tempDir(), "go.json");
+  writeFileSync(table, JSON.stringify([{ ...LANGUAGES.find((l) => l.id === "go"), verified: true }]));
+  assert.equal(JSON.parse(run(dir, ["--table", table]).stdout).languages.go.verified, false);
+});
 
-  const reasons = refused.map((f) => f.reason).join("\n");
-  for (const expected of [
-    "asserts through an assertion helper",
-    "inside a helper this file declares",
-    "imported symbol this scan does not follow",
-    "may pin a dependency",
-    "reads the filesystem",
-    "aggregate guard",
-    "structural",
-    "folded into the stage B",
-    "exempt",
-  ]) {
-    assert.match(reasons, new RegExp(expected), expected);
+test("every script finding has a change, a location, and a verify step", () => {
+  const doc = JSON.parse(run(fixtureRepo()).stdout);
+  for (const f of doc.findings.filter((x) => !x.refused)) {
+    assert.ok(f.change && f.where && f.verify, f.id);
+    assert.equal(f.proposal, undefined);
   }
-  assert.equal(doc.counts.candidates, reported.length + refused.length);
-  assert.ok(doc.findings.every((f) => f.source === "script"));
-  assert.deepEqual(doc.own_packages, ["@fixture/lib", "fixture"]);
-  assert.deepEqual(doc.own_aliases, ["@app/"]);
-  // Snapshot, `.not`, skipped, todo and xit cases are never candidates.
-  const titles = doc.findings.map((f) => f.signal + f.evidence).join("\n");
-  for (const absent of ['"snapshot"','"skip"', '"todo"', '"xit"', '"inside"', '"real"', '"dynamic import"', '"literal that fails"', '"snapshot and tautology"']) {
-    assert.ok(!titles.includes(`case ${absent}`) && !titles.includes(`in ${absent}`), absent);
-  }
-  assert.ok(!doc.findings.some((f) => f.file.includes("loop")));
 });
 
-test("workspace and alias imports count as own code", needTs, () => {
-  const dir = fixture();
-  const r = run(dir);
-  const doc = JSON.parse(r.stdout);
-  const titles = doc.findings.map((f) => f.signal).join("\n");
-  assert.ok(!titles.includes('"workspace package"'));
-  assert.ok(!titles.includes('"tsconfig alias"'));
+test("severity: unresolved calls are a question, a bare case is medium", () => {
+  const dir = fixtureRepo();
+  const doc = JSON.parse(run(dir, ["--languages", "javascript"]).stdout);
+  const sev = Object.fromEntries(doc.findings.filter((f) => !f.refused).map((f) => [f.case, f.severity]));
+  assert.equal(sev["no assertion"], "medium");
+  assert.equal(sev["calls unknown"], "question");
+  assert.equal(sev["same ref"], "medium");
+  assert.equal(sev.literals, "high");
+  assert.equal(sev["same call"], "medium");
 });
 
-test("stdout is the JSON document without --out", needTs, () => {
-  const dir = fixture();
-  const r = run(dir, ["--scope", "src/code.test.ts"]);
-  assert.equal(JSON.parse(r.stdout).tool, "useless-test-pruner");
+test("an --exempt file is refused, not reported", () => {
+  const dir = fixtureRepo();
+  const doc = JSON.parse(run(dir, ["--languages", "go", "--exempt", "pkg/a_test.go"]).stdout);
+  assert.equal(doc.counts.reported, 0);
+  assert.ok(doc.counts.refused_by_reason["exempt: the caller passed this file with --exempt"] >= 2);
 });
 
-test("a clean tree exits 0", needTs, () => {
+test("a --table row adds a language and replaces nothing else", () => {
   const dir = tempDir();
   write(dir, {
-    "a.test.js": `import { f } from "./a.js";\ntest("ok", () => { expect(f()).toBe(1); });\n`,
+    "spec/a.spec.lua": `it("empty", function()\n  local x = 1\nend)\nit("ok", function()\n  assert.are.equal(1, f())\nend)\n`,
   });
+  const table = join(tempDir(), "lua.json");
+  writeFileSync(table, JSON.stringify([{
+    id: "lua", name: "Lua (busted)", files: "\\.spec\\.lua$", mode: "parens",
+    comment: { line: ["--"] }, strings: ['"', "'"],
+    head: "^\\s*it\\s*\\(\\s*\"([^\"]*)\"", title: [1],
+    assert: ["\\bassert\\."], funcDecl: [], tautology: [], trivial: [],
+  }]));
+  const doc = JSON.parse(run(dir, ["--table", table]).stdout);
+  assert.deepEqual(keys(doc, "lua"), ["A:empty"]);
+  assert.equal(doc.languages.lua.verified, false);
+});
+
+test("a repo with no recognized test file exits 2", () => {
+  const dir = tempDir();
+  write(dir, { "readme.md": "x\n" });
+  const r = run(dir);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /no test files matched/);
+});
+
+test("test files with no recognized case exit 2, not 0", () => {
+  const dir = tempDir();
+  write(dir, { "a_test.go": "package a\n// nothing\n" });
+  const r = run(dir);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /no test cases recognized/);
+});
+
+test("a clean tree exits 0", () => {
+  const dir = tempDir();
+  write(dir, { "a_test.go": "package a\nfunc TestA(t *testing.T) { if f() != 1 { t.Fatal(1) } }\n" });
   const r = run(dir);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(JSON.parse(r.stdout).counts.reported, 0);
 });
 
-test("a repo with no tests exits 2, not 0", needTs, () => {
+test("an unclosed block is listed in skipped_files", () => {
   const dir = tempDir();
-  write(dir, { "readme.md": "x\n" });
-  const r = run(dir);
-  assert.equal(r.status, 2);
-  assert.match(r.stderr, /no test files/);
+  write(dir, {
+    "a_test.go": "package a\nfunc TestA(t *testing.T) { if f() != 1 { t.Fatal(1) } }\n",
+    "b_test.go": "package a\nfunc TestB(t *testing.T) {\n  x := 1\n",
+  });
+  const doc = JSON.parse(run(dir).stdout);
+  assert.equal(doc.skipped_files.length, 1);
+  assert.match(doc.skipped_files[0].reason, /does not close/);
 });
 
-test("no tsconfig and no package.json still scans", needTs, () => {
-  const dir = tempDir();
-  write(dir, { "t.test.js": `test("x", () => { const a = 1; expect(a).toBe(a); });\n` });
-  const r = run(dir);
-  assert.equal(r.status, 1, r.stderr);
-});
-
-test("a scope outside the root exits 2", needTs, () => {
-  const dir = fixture();
-  const r = run(dir, ["--scope", tmpdir()]);
-  assert.equal(r.status, 2);
-  assert.match(r.stderr, /outside/);
-});
-
-test("a scope that links out of the root exits 2", needTs, () => {
-  const dir = fixture();
+test("symlinks are not followed and a scope that links out exits 2", () => {
+  const dir = fixtureRepo();
   const outside = tempDir();
-  write(outside, { "x.test.js": "test('x', () => {});\n" });
+  write(outside, { "x_test.go": "package a\nfunc TestX(t *testing.T) { y := 1 }\n" });
+  symlinkSync(outside, join(dir, "pkg", "link"));
+  const doc = JSON.parse(run(dir, ["--languages", "go"]).stdout);
+  assert.ok(!doc.findings.some((f) => f.file.includes("link")));
   symlinkSync(outside, join(dir, "escape"));
   const r = run(dir, ["--scope", "escape"]);
   assert.equal(r.status, 2);
   assert.match(r.stderr, /outside/);
 });
 
-test("a file with syntax errors is skipped and listed", needTs, () => {
-  const dir = tempDir();
-  write(dir, {
-    "ok.test.js": `test("x", () => { const a = 1; expect(a).toBe(a); });\n`,
-    "bad.test.js": "test('x', () => { ;;; ) \n",
-  });
-  const doc = JSON.parse(run(dir).stdout);
-  assert.deepEqual(doc.skipped_files, [{ file: "bad.test.js", reason: "syntax errors" }]);
-  assert.equal(doc.counts.test_files, 1);
-});
-
-test("a tree where no file can be scanned exits 2", needTs, () => {
-  const dir = tempDir();
-  write(dir, { "bad.test.js": "test('x', () => { ;;; ) \n" });
-  const r = run(dir);
-  assert.equal(r.status, 2);
-  assert.match(r.stderr, /could be scanned/);
+test("--list-languages reports which rows a fixture covers", () => {
+  const r = spawnSync("node", [cli, "--list-languages"], { encoding: "utf8" });
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /kotlin\tguidance only/);
+  assert.match(r.stdout, /julia\tfixture-tested/);
 });
 
 test("an unknown argument exits 2", () => {
-  const r = run(tempDir(), ["--nope"]);
-  assert.equal(r.status, 2);
-});
-
-test("a missing typescript exits 2 rather than reporting clean", () => {
-  const dir = tempDir();
-  write(dir, { "a.test.js": "test('x', () => {});\n" });
-  const r = run(dir, [], { NODE_PATH: "" });
-  const resolvable = spawnSync(
-    "node",
-    ["-e", "require('module').createRequire(process.cwd() + '/x.js')('typescript')"],
-    { cwd: dir, env: { ...process.env, NODE_PATH: "" } }
-  ).status === 0;
-  if (resolvable) return;
-  assert.equal(r.status, 2);
-  assert.match(r.stderr, /typescript/);
+  assert.equal(run(tempDir(), ["--nope"]).status, 2);
 });

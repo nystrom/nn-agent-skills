@@ -139,14 +139,16 @@ correct.
 
 ### useless-test-pruner
 
-Scans a whole tree for test cases that run and cannot fail: a case with no
+Finds test cases that run and cannot fail, in any language: a case with no
 assertion, an assertion that holds for every input, and a case that asserts
-without reaching any code the repo owns. `scripts/scan.mjs` parses the test
-files (it needs the `typescript` package in the target repo) and writes a JSON
-findings file. It refuses snapshot-backed cases, cases that assert through a
-helper, and cases that pin a dependency on purpose, and counts each refusal. It
-reports and proposes; it edits only when asked. For a diff, use
-`test-coverage-code-review`.
+without reaching any code the repo owns. Symbol facts come from the language
+server when one exists, and from text search and reading otherwise; each
+finding says which. `scripts/scan.mjs` is a table-driven lead generator with no
+dependency beyond Node; adding a language means adding a row. It refuses
+snapshot-backed and skipped cases, and cases that assert through a helper in the
+same file, and counts each refusal.
+Every finding carries a proposed change, and the skill never edits files. For a
+diff, use `test-coverage-code-review`.
 
 ## Install with Claude Code
 

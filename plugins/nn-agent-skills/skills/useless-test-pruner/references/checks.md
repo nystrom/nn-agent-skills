@@ -1,136 +1,137 @@
 # Check catalog
 
-One entry per stage in `scripts/scan.mjs`: the signal, why it is allowed to
-fire, and the bound on what it sees. A stage with no stated reason is a guess
-about the codebase, and a guess that fires proposes deleting a working test.
+What each check means, what `scripts/scan.mjs` sees, and what it cannot see.
+Each check reports a shape, and a shape does not prove that a case is useless.
+The judgment pass in `SKILL.md` confirms, downgrades, or drops every finding.
 
-The stages fail in opposite directions, which sets their severities:
+The checks fail in different directions, which sets their severities:
 
-- **Stage A fails closed.** A helper the scan does not recognize as asserting
-  adds a refusal. A miss hides a finding.
-- **Stage B reports a syntax shape.** The shape shows the assertion does not
+- **A fails closed.** A call the scan cannot place may be an assertion helper.
+  The finding is a `question` and lists the calls. A miss hides a finding.
+- **B reports a syntax shape.** The shape shows that the assertion does not
   read the code under test. A getter on a repeated reference is not visible.
-- **Stage C fails open.** An import the scan does not attribute to this repo
-  makes a working test look untethered. A miss proposes deleting a working
-  test, so every stage C finding is `question` and proposes "confirm, then
-  delete".
-
-Each stage reports a syntax shape and does not prove the case is useless. The
-judgment pass in `SKILL.md` confirms, downgrades, or drops every finding from
-the code, and `SKILL.md` lists what the script cannot see.
+- **C fails open.** A symbol the reader fails to attribute to the repo makes a
+  working test look untethered. Every C finding is a `question` that proposes
+  confirming before deleting.
 
 The script has no baseline counts. A run on a repo you know that returns far
-more or far fewer candidates than the suite's size suggests means a stage or
-the repo discovery is wrong. Read a sample of each stage's output before
-reporting.
+more or far fewer candidates than the suite size suggests means a language row
+or a pattern is wrong. Read a sample of each check's output before reporting.
 
-## Stage A: a case that runs and asserts nothing
+## Check A: a case that runs and asserts nothing
 
-- Signal: an `it`, `test`, or `specify` whose body has no `expect()` call.
+- Signal: a case whose body has no assertion pattern. The patterns are the
+  language row's `assert` list plus an assertion-like call name
+  (`assert*`, `expect*`, `verify*`, `ensure*`, `invariant*`, `require*`,
+  `must*`, `check*`, `fail*`, with or without a `.name` or `::name` suffix).
 - Why it fires: a case with no assertion fails only by throwing, so it holds
   for every value the code under test produces.
-- Bound: one file. A helper declared in the file, at any scope, is followed. A
-  helper imported from another module is not, and a case that calls one (from
-  the repo or from a dependency) is refused.
-- Bound: a call on a parameter of the case (`t.ok`, `done`), a chai `should`
-  chain, and a `.expect()` method call (supertest) count as assertions.
-- Bound: an assertion library that is not named `assert*` or `expect*` (a
-  custom `check(...)` imported from a helper file) is refused as an unfollowed
-  import. One declared in the same file is followed.
-- Not covered: a case whose body is a function reference (`it("x", runCase)`).
-  It has no inline body, so the scan skips it.
+- Script: the case name is blanked first, so `fn check_it` is not an
+  assertion. A helper declared in the same file, at any depth, is followed three
+  calls deep. A case that calls an asserting helper is refused. Severity is
+  `medium` when every call in the body is a declared helper or there is no
+  call, and `question` when the body calls something the scan cannot place.
+- Script cannot see: a helper in another file, a helper in a dependency, an
+  assertion by a name the patterns do not list, a custom matcher, and a
+  fixture or hook that asserts after the body. The reviewer resolves each
+  listed call with the language server or by reading.
+- Script cannot see: a case that fails by throwing on purpose
+  (`schema.parse(input)`, `.unwrap()`, a thrown exception from the code under
+  test). It reports the case. The reviewer decides whether the case is a
+  deliberate does-not-throw check.
+- Bound: comments and string contents are blanked before matching, so code in
+  them is not read. Nested block comments are handled for Rust and Julia, and
+  `${...}` inside a JavaScript template literal stays visible. Regex literals,
+  raw strings, and heredocs are not handled.
+- Bound: a case ends at its matching brace, indentation level, call
+  parenthesis, or `end`. A `{` inside the parameter list is not the body.
+  A block that does not close is listed in `skipped_files`.
+- Bound: a curried table form such as `it.each(rows)("name", fn)` is one case,
+  and the call that builds the table is not a case.
+- Not covered: a case whose body is a function reference
+  (`it("x", runCase)`), a case defined by a macro or a loop the head pattern
+  does not match, and a table-driven case that generates names at run time.
 
-## Stage B: an assertion that holds for every input
+## Check B: an assertion that holds for every input
 
-- Signal: `expect(subject).matcher(expected)` in one of four shapes:
-  - the subject and expected value are the same expression, with `toBe`,
-    `toEqual`, or `toStrictEqual`;
-  - both sides are literals with the same value (`Object.is`);
-  - an existence matcher (`toBeDefined`, `toBeTruthy`, `toBeFalsy`, `toBeNull`,
-    `toBeUndefined`) that passes for the literal it is applied to;
-  - the expected value is `expect.anything()` or `expect.any()`, with an
-    equality matcher.
-- Why it fires: the assertion's truth does not depend on the code under test,
-  so no change to the repo can fail it.
-- Bound: `.not` is skipped, and so is a literal assertion that always fails.
-  That is a different bug with a different fix.
-- Bound: a repeated expression that is a call, `new`, `await`, update, or
-  assignment is `medium`. It checks that the expression is stable, which is a
-  weak real property. The proposal is to compare two independently constructed
-  values. `expect.anything()` and `expect.any()` are also `medium`: they check
-  that a value of that kind exists.
-- Bound: identical literals reach the same-expression shape first, so the
-  both-literals shape fires on literals that differ in text and agree in value
-  (`toBe(1)` against `1.0`).
-- Bound: only `expect(...)` chains are read. `assert.equal(x, x)` is not.
-- Bound: a case with a snapshot matcher gets no stage B finding.
+- Signal, in the forms the language row lists:
+  - both sides are the same expression after whitespace is normalized;
+  - both sides are literals with equal values (`1` and `1.0`);
+  - a constant true assertion (`assert True`, `assertTrue(true)`);
+  - for the JavaScript row, `expect(x).toBe(x)` and the other equality chains,
+    skipped under `.not`.
+- Why it fires: the assertion's truth does not depend on the code under test.
+- Severity: a repeated expression is `medium`. Equality can fail to be
+  reflexive (NaN, an overloaded operator), and a getter can change between
+  reads. When the expression has a call, `new`, `await`, or an update, the
+  assertion checks that it is stable, and the proposal is to compare two
+  independently constructed values. Two equal literals and a constant true
+  assertion are `high`. Integer literals compare exactly; other decimals
+  compare as written.
+- Bound: JUnit and Kotlin `assertEquals` with three arguments and a string
+  first is read as message first, so the pair shifts by one.
+- Script cannot see: weak matchers on wide values (`toBeDefined` on an object,
+  `assert x is not None`, `EXPECT_TRUE(ptr)` for a pointer that cannot be
+  null), a matcher that accepts any value (`expect.anything()`, `ANY`), a mock
+  that asserts on its own setup, a getter that changes between reads, an
+  assertion library with no row entry, and an assertion in a string or comment
+  (the scan ignores those on purpose).
+- Script cannot see: which argument order a custom assertion uses. Check the
+  row's `pair` against the repo's assertion library.
 
-## Stage C: a case that asserts without reaching this repo
+## Check C: a case that asserts without reaching repo code
 
-- Signal: a case that asserts (an `expect()`, an assertion helper, or a helper
-  declared in the file that asserts) and whose reference closure names no
-  symbol imported from this repo.
-- Why it fires: no change to the repo can make such a case fail, so it does not
-  cover the repo.
-- Own code means: a relative or absolute path, a `#` subpath import, a
-  workspace package name, a prefix from a root `tsconfig.json` `paths` key, or a
-  name bound from `import()` or `require()` of those. Type-only imports do not
-  count.
-- Bound: one file, and identifiers rather than types. The closure follows calls
-  into helpers the file declares at any scope. Collecting only top-level
-  declarations makes a helper declared inside a `describe`, or a name bound by
-  `const { f } = await import("./f.js")`, look like a name from nowhere.
-- Bound: names a global provides (a test that reaches the code through a
-  global, not an import) look untethered.
-- Bound: only the root `tsconfig.json` and the root workspace config are read.
-  A per-package alias or a bundler alias is read as a dependency, which adds a
-  refusal in stage C.
+The script does not run this check. It needs the meaning of names. The reviewer
+runs it for every case that asserts.
+
+- Signal: the body and the helpers it calls reach no function, type, or value
+  that the repo owns.
+- Resolve with a language server: definition and find-references for each call,
+  call hierarchy through helpers, document symbols to find the case's helpers.
+  The result is `lsp`. Without a server, use `rg` or `git grep` to find where
+  each name is defined and read the imports (`text` or `read`).
+- Own code means: a module in the repo, a workspace member or package the repo
+  defines, a name an alias maps into the repo. A dependency, the standard
+  library, a test framework, and the case's own constants are not own code.
+- Not a finding: a case that pins a dependency's behavior on purpose (nothing
+  else in the suite would notice a change); a whole-tree check that reads the
+  source with file APIs and compares it to a list; an aggregate guard over
+  state other cases write; a placeholder case a runner requires in a module
+  other test files import. Each one resembles check C and is deliberate.
+- Names that a global, a build alias, or generated code provides look
+  untethered. Confirm before proposing a deletion.
 
 ## Refusals
 
-| Refusal | Stage | Reason |
+| Refusal | Check | Reason |
 | ------- | ----- | ------ |
-| asserts through an assertion helper, runner API, or assert library | A | `assert*`, `expect*`, `invariant`, `fail`, `assert.*`, a call on the case parameter, `should`, and `.expect()` throw instead of calling `expect()`. |
-| asserts through a helper the file declares | A | The helper body contains an assertion, so the case asserts. |
-| calls an imported symbol the scan does not follow | A | The scan reads one file. An imported helper may assert, and a dependency call such as a `findBy*` query throws. |
-| exempt by the caller | A, B, C | Passed with `--exempt`. |
-| folded into a stage B finding | C | A case both stages fire on is reported once, by the stage that names the assertion. |
-| a file-scope accumulator | C | A file-scope `let` that other cases assign. A case that asserts on it is an aggregate guard against the whole file going vacuous. |
-| reaches `fs` or `child_process` | C | A whole-tree test reads the source and compares it to a list. It imports no repo symbol by design. |
-| reaches a dependency | C | The case may pin the dependency's behavior on purpose. Nothing else in the suite would notice a change. |
-| placeholder in an imported test module | C | Some runners fail a test file that declares no case. The importing path is resolved against the importing file, so two same-named helpers stay distinct. |
+| snapshot-backed | all | The stored file is the assertion. The row's `snapshot` pattern marks the case. |
+| skipped, disabled, todo | all | The case does not run. A skipped suite block marks its cases too (JavaScript row). |
+| asserts through a helper in the same file | A | The helper body has an assertion pattern, so the case asserts. |
+| holds nested cases | A | A group's own body is not where the assertions live. Each nested case is judged alone. |
+| exempt | all | The caller passed the file with `--exempt`. |
 
-Skipped, `todo`, and `xit` cases, and cases inside `describe.skip` or
-`xdescribe`, are not candidates in any stage. "Does not run" is a different
-argument from "runs and cannot fail", and answering the second with the first
-makes the proposal unarguable.
-
-A case with a snapshot matcher is not a candidate in any stage. A snapshot
-assertion looks inert at the assertion site, and the `.snap` file holds the
-expectation.
+A snapshot-backed case gets no B finding, even when it also holds a tautology.
 
 ## Mutation evidence
 
-The script collects none. The syntax checks support these readings, and a
-reader confirms them:
+The script collects none. The checks support these readings, and the reviewer
+confirms them:
 
-- Stage B: no mutant of the code under test changes an assertion whose two sides
-  are the same expression.
-- Stage C: the case reaches no repo code, so no mutant is inside its covered
-  range.
-- Stage A: the assertion set is empty, which is what "kills nothing" means.
+- B: no mutant of the code under test changes an assertion whose two sides are
+  the same expression.
+- C: the case reaches no repo code, so no mutant is inside its covered range.
+- A: the assertion set is empty, which is what "kills nothing" means.
 
-A stage A case that asserts inside a helper the scan cannot read is the case
-that would need a coverage-guided mutation run. The scan refuses the imported
-ones. A helper reached through a global or a name the scan does not resolve is
-not refused, so read each reported stage A case.
+A proposed change names a mutation of the code under test that the repaired
+assertion must catch. State no kill rate you did not measure.
 
 ## Not checked
 
-- `expectTypeOf` and `@ts-expect-error` cases. A type-level assertion fails in
-  the type checker, not at runtime. The scan treats `expectTypeOf(...)` as an
-  assertion helper by name and does not look for `@ts-expect-error` comments.
-- Duplicate cases, cases that test only a mock, weak matchers on wide values,
-  and test files in other languages. Those need the survey in `SKILL.md`, not a
-  syntax scan.
-- A file with syntax errors. The scan skips it and lists it in `skipped_files`.
+- `expectTypeOf`-style and compile-time assertions, which fail in the type
+  checker and not at run time. The scan treats `expectTypeOf(...)` as an
+  assertion by name.
+- Duplicate cases, cases that test only a mock, and weak matchers. These need
+  the survey in `SKILL.md`.
+- Languages with no row. Use the method in `SKILL.md` and
+  `references/languages.md` by reading.
