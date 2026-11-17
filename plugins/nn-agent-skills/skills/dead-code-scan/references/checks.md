@@ -90,6 +90,7 @@ counts as a reference):
 | `build-and-ci-references` | Source and shell files whose path appears in a manifest, Makefile, script, or CI file |
 | `tests` | Test files by name and directory convention, and test setup files |
 | `tool-configs` | Files such as `*.config.js`, `conftest.py`, `build.rs` |
+| `public-api` | Directories whose manifest publishes a library (`package.json` without `private: true`; `Cargo.toml` with a library target and no `publish = false` in its `[package]` table; `go.mod`; `Project.toml` with a name), or paths the user named with `--public-api`. Exported symbols there are live. |
 | `docs-and-data` | Every other readable text file |
 | `other-repositories` | The cross-repository search, or the caller's assertion that there are none |
 
@@ -102,12 +103,15 @@ it may load):
 | `convention-directory:<dir>` | Files under `migrations`, `seeds`, `plugins`, `handlers`, `commands`, `routes`, `api`, or `middleware` | The directory exists |
 | `dynamic-loading` | Files in the same package directory as the loader | Computed `import`/`require`, `import.meta.glob`, `importlib`, `Class.forName`, `ServiceLoader`, `plugin.Open`, `MethodByName`, `dlopen`, `LoadLibrary`, Julia `include` with a computed path, `const_get` |
 | `ffi-exports` | The file with the attribute | `#[no_mangle]`, `extern "C"`, `//export`, `@JvmStatic`, `JNIEXPORT`, `dllexport`, `visibility` attributes, `@ccallable`, `#[pyfunction]`, `#[wasm_bindgen]` |
+| `publication-status:<dir>` | Source files under a directory whose manifest does not say whether the code is published (`pyproject.toml`, `setup.py`, `pom.xml`, `build.gradle*`, `*.csproj`, `Package.swift`, `mix.exs`, `Gemfile`, `composer.json`, build files alone) | The user's answer (`--public-api`, `--not-public`), or the project's docs |
+| `public-api-scope` | Files in packages the manifests mark private, while the repository also has public packages | The repository mixes published and unpublished source directories and the user has passed neither `--public-api` nor `--not-public` |
 | `manifest` | Files with no manifest or build file (`Makefile`, `CMakeLists.txt`, `BUILD`, `justfile`, `meson.build`) in their directory or an ancestor | A source file the nearest manifest does not own |
 | `unread-files` | Every candidate | A file over `--max-file-bytes`, so its references are not counted |
 | `other-repositories` | Nothing by itself; every candidate is `unknown` | `gh` missing, not authenticated, or the owner unknown |
 
 `--accept-root <id>` moves an unresolved root to found, with the detail marked
-as accepted by the caller. `--accept-root <id>:<path>` lifts the block only for
+as accepted by the caller. Ids can hold colons, so the longest matching id wins.
+`--accept-root <id>:<path>` lifts the block only for
 files under `<path>` and leaves the root unresolved for the rest. Use it only
 after the user said what the root loads. `--accept-root other-repositories`
 means `--no-external`.
@@ -118,9 +122,28 @@ Package directories come from the nearest manifest. Mapping build output to
 source (for example `dist/` to `src/`) is not attempted; the model reads the
 build configuration when it matters.
 
+## Public API refusal
+
+`public-api` refuses a candidate whose package is published as a library, or
+whose path the user named with `--public-api`, when the declaration is exported
+(hint `exported`, `public-by-convention`, or `unknown`). It is a path-level rule. A `[package]` table that inherits `publish` from a
+workspace is `unclear`. Go `internal/` paths keep the module's status, because
+code in the parent import-path tree, in other modules, can import them and they
+can appear in public signatures; the model checks that.
+It does not check whether an entry point reaches the file, so it also refuses
+exported symbols in internal files of a published package. That is the safe
+direction: the model overturns it after tracing the API (entry points,
+re-exports, public signatures), or the user says the path is not public
+(`--not-public`).
+
+A cross-repository search runs for these candidates too. A hit is evidence for
+the verdict. An empty result does not lift the refusal: the library's users can
+live outside the searched owner or outside GitHub.
+
 ## Cross-repository search
 
-For each distinct candidate name that no local rule refused:
+For each distinct candidate name that no local rule refused (and for each
+`public-api` refusal, as evidence):
 
 - `gh search code <name> --owner <owner> --json repository,path --limit 100`.
   The owner is `--org` or the owner of the `origin` remote. Hits in the current

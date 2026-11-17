@@ -15,7 +15,10 @@ description: >-
 # Dead Code Scan
 
 A symbol is dead only if it is unreachable from every root of the dependency
-graph. The scan lists candidates and roots. The model decides.
+graph. The public API of the repository is itself a root: other repositories
+that use this one as a library reach every symbol the API exposes, with zero
+references inside this repository. The scan lists candidates and roots. The
+model decides.
 
 **Contract.** The output is findings. Each finding has a concrete proposed
 change: what to change, where, and the check that would verify it, as text or a
@@ -57,7 +60,9 @@ else in that file is guidance.
    CONTRIBUTING, manifests, build files, CI). Then list every root class that
    applies, from `references/languages.md`:
    - entry points: `main` functions, binaries, CLI and server entry files;
-   - the public API of libraries and packages;
+   - the public API of libraries and packages, discovered at run time (see
+     "Public API" below). Every symbol reachable from it is live, including
+     types a public function takes or returns;
    - build targets and scripts, and CI steps that run files directly;
    - test entry points and test setup files;
    - build and tool configs that import code, plugin or loader registries;
@@ -82,6 +87,12 @@ else in that file is guidance.
    - `roots.unresolved` is not empty;
    - no manifest or build file exists, or the repository is a monorepo whose
      consumers are unclear;
+   - the repository is a library, or its publication status is unclear: no
+     manifest, a manifest that does not say whether the code is published
+     (`publication-status:<dir>` in `roots.unresolved`), or a mix of published
+     and internal packages (`public-api-scope`). Ask which packages or
+     directories are public API and which other repositories consume them,
+     unless the project's docs answer it;
    - a framework or convention in the repository is not in `roots.found` or
      `roots.unresolved` (the scan knows a fixed list);
    - the project documents no entry points and you cannot find them.
@@ -89,7 +100,10 @@ else in that file is guidance.
    Ask, after reading the project's own docs, only about what stays open. One
    message, in this form: "The scan could not evaluate these roots: `<ids and
    detail>`. For each, which files or symbols does it load or call, or is it
-   not used here?" When the user answers, pass `--accept-root <id>:<path>`
+   not used here?" For publication, the question is: "Which packages or
+   directories are public API, and which other repositories consume them?" Pass
+   the answer as `--public-api <path>` and `--not-public <path>`. For other
+   roots, when the user answers, pass `--accept-root <id>:<path>`
    (the root is evaluated for the files under that path) or `--accept-root <id>`
    (all files) and rerun, or keep the candidate refused. `--accept-root
    other-repositories` means `--no-external`. A candidate reachable only from a root the
@@ -121,6 +135,43 @@ else in that file is guidance.
    counts by category; then the open roots, if any. Say which languages used
    which evidence source.
 
+## Public API
+
+The public API is the set of names other repositories can use. Discover it at
+run time from the language's rules (`references/languages.md`): manifest entry
+points and export maps, `__all__` and non-underscore names in a distributed
+Python package, capitalized names in a Go package outside `internal/`, `pub`
+items reachable from the crate root, public and protected members of public
+types in Java and Kotlin, headers that the build installs or lists, exported
+and `public` names in a Julia module.
+
+A symbol is also in the API when a public signature exposes it: a type that a
+public function takes or returns, a base type of a public type, a type in a
+public field. Trace these with the language server (references and type
+hierarchy) or by reading.
+
+When the repository is a published library, an exported symbol with no consumer
+found is a refusal (`public-api`), not a finding. Other-repository evidence
+(`gh search code`, repositories the user names) supports the verdict and never
+replaces this root: finding no consumer does not make a public symbol dead. Only
+the user can say that a package or directory is not public API. Do not guess.
+Separately, the model may overturn the refusal for one symbol, as described
+below.
+
+The scan marks a package public from its manifest (`package.json` without
+`private: true`, a Cargo library target without `publish = false`, a Go module
+outside `internal/`, a Julia `Project.toml` with a name), private from the
+opposite, and unclear for every other manifest and build file. The model
+overturns a `public-api` refusal for one symbol only after it shows, from the
+language server or reading, that no public entry point reaches it, directly or
+through a signature. A user's answer that a path is not public API settles the
+whole path and needs no per-symbol trace.
+
+The paths named with `--public-api` and `--not-public` are relative to the
+current directory, so run the scan from the repository root. The most specific
+path wins, and the same path on both sides is an error. One answer settles the
+question for the paths it names. Ask about each package that is still open.
+
 ## What the scan sees and does not see
 
 | Check | The scan sees | The model must cover |
@@ -128,6 +179,7 @@ else in that file is guidance.
 | `dead-export` | A declaration line, in a supported language, whose name occurs once in all readable text files. | Names that occur more than once but are all dead (a cycle, a helper used only by a dead function, a use only in a comment or string). Declarations with no keyword on the line (C functions, methods, Java methods, Go `type (` blocks, Julia short functions). Languages not in the table. |
 | `dead-reexport` | A re-export line whose name occurs in exactly two files, two times. | Whether the second file declares the name. Re-exports the line pattern misses. Glob re-exports, which carry every name. |
 | Visibility | A hint from the declaration line (`exported`, `public-by-convention`, `unknown`). | Whether the package publishes the file: manifests, export maps, public headers, module systems, build visibility. |
+| Public API | A package-level status from the manifest (`public`, `private`, `unclear`), and the exported hint of each declaration. | Which exported symbols a public entry point reaches, including through signatures. Packages whose manifest says nothing about publication. |
 | Roots | Manifests, `main` functions, files named in build and CI files, tests, tool configs, docs and data read by name, framework paths from a fixed list, directories that usually load by path, computed loads, FFI attributes. | Everything else in step 1, including frameworks outside the list and how a build maps output to source. |
 | Other repositories | `gh search code` hits for the symbol name under one GitHub owner. | Consumers under other owners, binary consumers, and consumers that import a renamed alias. |
 | Binary and large files | Reports them. Files over the size limit block every candidate (`unread-files`) until read or accepted. | Reading them if they can name symbols. Binary files are not tokenized. |
@@ -148,11 +200,14 @@ The scan refuses a candidate, with a category, when:
 | `side-effect-initializer` | The declaration line calls code or declares several names, so removal may remove an effect. |
 | `test-support` | The file is under a fixture, sample, mock, or example directory. |
 | `doc-in-directory` | The directory holds a README, DESIGN, or ARCHITECTURE file. A symbol that completes a documented set is not dead because nothing uses it yet. |
-| `unevaluated-root` | A root the scan could not evaluate may load the symbol, including `manifest` (no manifest or build file above the file) and `unread-files` (files over the size limit). |
+| `public-api` | The package is published as a library and the symbol is exported (hint `exported`, `public-by-convention`, or `unknown`). Searched in other repositories too, for evidence. |
+| `unevaluated-root` | A root the scan could not evaluate may load the symbol, including `manifest` (no manifest or build file above the file), `publication-status:<dir>` (the manifest does not say whether the code is published), and `unread-files` (files over the size limit). |
 | `exported-with-hits` | Another repository names the symbol. |
 | `unknown` | The cross-repository search could not run or failed (no `gh`, not authenticated, unknown owner, rate limit, a full page of own-repository hits, or the `--max-external` limit). |
 
-`--no-external` skips the cross-repository search. Use it only when the user
+`--public-api <path>` and `--not-public <path>` record the user's answer about
+which paths are public API. `--accept-root <id>` takes the full id, and
+`--accept-root <id>:<path>` limits it to a path (`framework:next:pages/a`). `--no-external` skips the cross-repository search. Use it only when the user
 states that the repository has no consumers elsewhere, and say so in the
 report. Without `gh` and without `--no-external`, nothing is a candidate: say
 that outright instead of calling the repository clean. The search waits

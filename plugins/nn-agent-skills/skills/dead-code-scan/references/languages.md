@@ -24,6 +24,26 @@ types, and unused diagnostics. Fall back to `rg` or `git grep` and reading.
 | Julia | `Project.toml`, `src/<Package>.jl`, `runtests.jl`, `@main`, `PROGRAM_FILE` guard | `export`, `public`, and qualified use `Pkg.name`; methods extend generic functions defined elsewhere | `test/runtests.jl` | `LanguageServer.jl` |
 | C#, Swift, Kotlin/Native, Dart, Scala, Ruby, PHP, Elixir | The project file (`*.csproj`, `Package.swift`, `pubspec.yaml`, `build.sbt`, `Gemfile`, `composer.json`, `mix.exs`) | The language's visibility keywords and its export or module list | The framework's test directory and runner configuration | The language's standard server (`omnisharp`, `sourcekit-lsp`, `metals`, `solargraph`, `intelephense`, `elixir-ls`) |
 
+## Public API
+
+The public API is a root. Everything it reaches is live, including types that
+public signatures expose. Discover it from the project, then trace it:
+
+| Language | Public API is | Transitive exposure to trace |
+| -------- | ------------- | ---------------------------- |
+| TypeScript, JavaScript | Names exported from the files that `main`, `module`, `types`, `bin`, and `exports` name, and from files they re-export; every file when there is no `exports` map | Types in exported signatures and declaration output; re-exported types |
+| Python | `__all__`, else non-underscore names in the package's `__init__` and public modules, for a distributed package | Return and parameter types in public annotations, base classes, names re-exported in `__init__` |
+| Go | Capitalized names in packages outside `internal/`, and in `internal/` packages that code outside the module can import by the import-path rule | Unexported types returned by exported functions, embedded types, interface method sets |
+| Rust | `pub` items reachable from the crate root through `pub mod` and `pub use` | Private types in public signatures (`pub(crate)` leaks), trait impls, associated types |
+| Java, Kotlin | Public and protected members of public types in exported packages (`module-info.java` `exports`, or the published artifact) | Types in public signatures, supertypes, annotation processors and service files |
+| C, C++ | Headers the build installs or lists as public; symbols with export attributes or in a linker version script | Types in public declarations, macros, inline functions |
+| Julia | `export` and `public` names of a registered package module, and qualified use `Pkg.name` | Types in exported method signatures; methods other packages extend |
+| Others | The language's visibility keywords plus its module or export list | The same: signature types, supertypes, re-exports |
+
+The scan reads the manifest to decide `public`, `private`, or `unclear` per
+directory. It does not follow entry points or signatures. The model does, with
+the language server where one exists.
+
 ## Roots beyond the table
 
 - **FFI and export attributes.** The name is used from another language or a

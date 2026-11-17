@@ -38,6 +38,12 @@ Options:
                         for all files. Use only after the user said what the
                         root loads. other-repositories means --no-external.
                         Repeatable.
+  --public-api <path>   The files under <path> are public API of a library
+                        that other repositories consume. Repeatable.
+  --not-public <path>   The files under <path> are not public API (the user
+                        said so). Repeatable. Paths are relative to the
+                        current directory; run from the repository root. The
+                        most specific path wins.
   --no-external         Skip the cross-repository search. Use only when the
                         repository has no consumers elsewhere.
   --org <owner>         GitHub owner to search. Default: owner of the origin
@@ -182,7 +188,9 @@ function parseArgs(argv) {
   const options = {
     scopes: [],
     keep: new Set(),
-    acceptRoots: new Map(),
+    acceptRoots: [],
+    publicApi: [],
+    notPublic: [],
     out: undefined,
     external: true,
     org: undefined,
@@ -218,15 +226,20 @@ function parseArgs(argv) {
         options.keep.add(value(i, "--keep"));
         break;
       case "--accept-root": {
-        const [id, ...scope] = value(i, "--accept-root").split(":");
-        if (id === "other-repositories") {
+        const raw = value(i, "--accept-root");
+        if (raw === "other-repositories") {
           options.external = false; // the caller asserts there are none
         } else {
-          const paths = options.acceptRoots.get(id) ?? [];
-          options.acceptRoots.set(id, scope.length === 0 || paths === null ? null : [...paths, scope.join(":")]);
+          options.acceptRoots.push(raw);
         }
         break;
       }
+      case "--public-api":
+        options.publicApi.push(value(i, "--public-api"));
+        break;
+      case "--not-public":
+        options.notPublic.push(value(i, "--not-public"));
+        break;
       case "--org":
         options.org = value(i, "--org");
         break;
@@ -460,6 +473,45 @@ function candidates(files, index, scopes) {
   return found;
 }
 
+/**
+ * Whether the package a manifest describes is published as a library whose
+ * exported names other repositories can use.
+ * @returns {{status: "public"|"private"|"unclear", why: string}}
+ */
+function manifestPublication(root, file, fileSet) {
+  const base = path.posix.basename(file);
+  const dir = path.posix.dirname(file);
+  const text = () => readFileSync(path.join(root, file), "utf8");
+  try {
+    if (base === "package.json") {
+      return JSON.parse(text()).private === true
+        ? { status: "private", why: "package.json has private: true" }
+        : { status: "public", why: "package.json is not private" };
+    }
+    if (base === "Cargo.toml") {
+      const section = /^\s*\[package\]([\s\S]*?)(?=^\s*\[|$(?![\s\S]))/m.exec(text())?.[1] ?? "";
+      if (/^\s*publish\s*=\s*false/m.test(section)) {
+        return { status: "private", why: "Cargo.toml has publish = false" };
+      }
+      if (/^\s*publish\s*(\.workspace\s*=\s*true|=\s*\{)/m.test(section)) {
+        return { status: "unclear", why: "Cargo.toml inherits publish from the workspace" };
+      }
+      return /^\s*\[lib\]/m.test(text()) || fileSet.has(path.posix.join(dir, "src/lib.rs"))
+        ? { status: "public", why: "Cargo.toml has a library target" }
+        : { status: "private", why: "Cargo.toml has no library target" };
+    }
+    if (base === "go.mod") {
+      return { status: "public", why: "go.mod declares a module; the model checks internal/ import rules" };
+    }
+    if (base === "Project.toml" && /^name\s*=/m.test(text())) {
+      return { status: "public", why: "Project.toml declares a package" };
+    }
+  } catch {
+    return { status: "unclear", why: `${file} could not be read` };
+  }
+  return { status: "unclear", why: `${base} does not say whether the code is published` };
+}
+
 const owningDir = (file, manifestDirs) => {
   for (let dir = path.posix.dirname(file); ; dir = path.posix.dirname(dir)) {
     const normalized = dir === "." ? "" : dir;
@@ -498,6 +550,7 @@ function packageJsonEntries(root, file) {
  */
 function discoverRoots(root, files, index, options, externalState) {
   const names = files.map((f) => f.file);
+  const fileSet = new Set(names);
   const sources = names.filter((f) => LANGUAGES[extOf(f)] !== undefined);
   const found = [];
   const unresolved = [];
@@ -590,6 +643,88 @@ function discoverRoots(root, files, index, options, externalState) {
       );
     }
   }
+  // Publication status per manifest directory. Package manifests decide when
+  // present; a build file alone says nothing about publication.
+  const statusByDir = new Map();
+  for (const dir of manifestDirs) {
+    const inDir = (f) => (path.posix.dirname(f) === "." ? "" : path.posix.dirname(f)) === dir;
+    const own = names.filter(
+      (f) => inDir(f) && (PACKAGE_MANIFESTS.has(path.posix.basename(f)) || f.endsWith(".csproj"))
+    );
+    const statuses = own.map((f) =>
+      f.endsWith(".csproj")
+        ? { status: "unclear", why: ".csproj does not say whether the code is published" }
+        : manifestPublication(root, f, fileSet)
+    );
+    const pick = (status) => statuses.find((x) => x.status === status);
+    statusByDir.set(
+      dir,
+      pick("public") ?? pick("unclear") ?? pick("private") ?? { status: "unclear", why: "only a build file describes this directory" }
+    );
+  }
+  // The most specific path the caller named wins; equal paths conflict.
+  const depth = (file, paths) =>
+    Math.max(-1, ...paths.filter((q) => q === "" || file === q || file.startsWith(`${q}/`)).map((q) => (q === "" ? 0 : q.split("/").length)));
+  const statusOf = (file) => {
+    const dir = owningDir(file, manifestDirs);
+    const priv = depth(file, options.notPublic);
+    const pub = depth(file, options.publicApi);
+    if (priv >= 0 && priv === pub) {
+      fail(`--public-api and --not-public name the same path for ${file}`);
+    }
+    if (priv > pub) {
+      return { status: "private", dir, why: "the caller said this path is not public API" };
+    }
+    if (pub > priv) {
+      return { status: "public", dir, why: "the caller said this path is public API" };
+    }
+    if (dir === undefined) {
+      return { status: "unclear", dir, why: "no manifest above this file" };
+    }
+    return { ...statusByDir.get(dir), dir };
+  };
+  const publicDirs = new Map();
+  const sourceStatuses = new Set();
+  for (const file of sources) {
+    const state = statusOf(file);
+    sourceStatuses.add(state.status);
+    if (state.status === "public") {
+      publicDirs.set(state.dir ?? "(path)", state.why);
+    }
+  }
+  if (publicDirs.size > 0) {
+    add(
+      found,
+      "public-api",
+      "public API of libraries other repositories can use; exported symbols are live until the user says otherwise",
+      list([...publicDirs].map(([dir, why]) => `${dir || "."}: ${why}`))
+    );
+  }
+  for (const dir of manifestDirs) {
+    const unclear = sources.filter((f) => owningDir(f, manifestDirs) === dir && statusOf(f).status === "unclear");
+    if (unclear.length > 0) {
+      block(
+        `publication-status:${dir || "."}`,
+        `${statusByDir.get(dir).why}, so the public API of ${dir || "the repository"} is unknown`,
+        list(unclear),
+        (file) => owningDir(file, manifestDirs) === dir && statusOf(file).status === "unclear"
+      );
+    }
+  }
+  if (
+    sourceStatuses.has("public") &&
+    sourceStatuses.has("private") &&
+    options.publicApi.length === 0 &&
+    options.notPublic.length === 0
+  ) {
+    block(
+      "public-api-scope",
+      "the repository mixes published and unpublished packages; which directories are public API is a question for the user",
+      "see public-api under found",
+      (file) => statusOf(file).status === "private"
+    );
+  }
+
   const loaders = [];
   const ffi = new Set();
   for (const file of sources.filter((f) => !isTestPath(f))) {
@@ -640,11 +775,22 @@ function discoverRoots(root, files, index, options, externalState) {
     add(unresolved, "other-repositories", "other repositories", externalState.blocker);
   }
 
-  for (const [id, paths] of options.acceptRoots) {
-    const at = unresolved.findIndex((r) => r.id === id);
-    if (at === -1) {
-      fail(`--accept-root ${id}: no such unresolved root. Unresolved: ${unresolved.map((r) => r.id).join(", ") || "none"}`);
+  // Root ids can hold colons (framework:next), so match the longest id first
+  // and read the rest as a path.
+  const accepts = new Map();
+  for (const raw of options.acceptRoots) {
+    const match = [...unresolved]
+      .sort((a, b) => b.id.length - a.id.length)
+      .find((r) => raw === r.id || raw.startsWith(`${r.id}:`));
+    if (match === undefined) {
+      fail(`--accept-root ${raw}: no such unresolved root. Unresolved: ${unresolved.map((r) => r.id).join(", ") || "none"}`);
     }
+    const scope = raw === match.id ? null : raw.slice(match.id.length + 1);
+    const before = accepts.get(match.id);
+    accepts.set(match.id, scope === null || before === null ? null : [...(before ?? []), scope]);
+  }
+  for (const [id, paths] of accepts) {
+    const at = unresolved.findIndex((r) => r.id === id);
     if (paths === null) {
       const [accepted] = unresolved.splice(at, 1);
       found.push({ ...accepted, detail: `accepted by caller; ${accepted.detail}` });
@@ -655,11 +801,11 @@ function discoverRoots(root, files, index, options, externalState) {
       unresolved[at].detail = `accepted by caller for ${paths.join(", ")}; ${unresolved[at].detail}`;
     }
   }
-  return { found, unresolved, blocks };
+  return { found, unresolved, blocks, statusOf };
 }
 
 /** The refusal that applies without any search, as `{category, reason}`. */
-function localRefusal(candidate, root, options, blockedBy) {
+function localRefusal(candidate, root, options, blockedBy, publicBy) {
   if (options.keep.has(candidate.name)) {
     return { category: "kept-by-caller", reason: "the caller listed this name with --keep" };
   }
@@ -689,6 +835,12 @@ function localRefusal(candidate, root, options, blockedBy) {
   }
   if (blockedBy !== undefined) {
     return { category: "unevaluated-root", reason: `root ${blockedBy} is not evaluated and may load this symbol` };
+  }
+  if (publicBy !== undefined) {
+    return {
+      category: "public-api",
+      reason: `${publicBy}; the public API is a root, so an exported symbol is live even with no consumer found, unless the user states it is not public`,
+    };
   }
   return undefined;
 }
@@ -807,12 +959,15 @@ function externalVerdicts(root, names, options) {
   return { verdicts, blocker, searched };
 }
 
-function buildFindings(found, root, options, index, blockFor, externals) {
+function buildFindings(found, root, options, index, blockFor, publicFor, externals) {
   const rows = found.map((candidate) => ({
     candidate,
-    refusal: localRefusal(candidate, root, options, blockFor(candidate)),
+    refusal: localRefusal(candidate, root, options, blockFor(candidate), publicFor(candidate)),
   }));
-  const searchNames = [...new Set(rows.filter((r) => r.refusal === undefined).map((r) => r.candidate.name))];
+  // A public-API refusal is searched too: the hits are evidence for the
+  // verdict, but a search that finds nothing never lifts it.
+  const searched = (r) => r.refusal === undefined || r.refusal.category === "public-api";
+  const searchNames = [...new Set(rows.filter(searched).map((r) => r.candidate.name))];
   const external = externals(searchNames);
 
   const findings = [];
@@ -860,7 +1015,7 @@ function buildFindings(found, root, options, index, blockFor, externals) {
   };
   const noSearch = { external: "not-run", hits: [], note: undefined };
   for (const row of rows) {
-    findings.push(make(row, row.refusal === undefined ? external.verdicts.get(row.candidate.name) : noSearch));
+    findings.push(make(row, searched(row) ? external.verdicts.get(row.candidate.name) : noSearch));
   }
   // Candidates first, then refusals; stable within each group.
   findings.sort((a, b) => Number(a.refused) - Number(b.refused));
@@ -927,6 +1082,12 @@ function scan(argv) {
       fail("--out is inside the repository under review; write the findings outside it, for example under the system temp dir");
     }
   }
+  const relative = (s) => path.relative(root, path.resolve(process.cwd(), s)).split(path.sep).join("/");
+  options.publicApi = options.publicApi.map(relative);
+  options.notPublic = options.notPublic.map(relative);
+  if ([...options.publicApi, ...options.notPublic].some((q) => q.startsWith(".."))) {
+    fail("--public-api and --not-public paths must be inside the repository");
+  }
   const files = repoFiles(root);
   const index = readRepository(root, files, options);
   const found = candidates(files, index, scopes).sort(
@@ -939,7 +1100,11 @@ function scan(argv) {
   const early = discoverRoots(root, files, index, options, { blocker: undefined, searched: 0 });
   const blockFor = (candidate) => [...early.blocks].find(([, matches]) => matches(candidate.file))?.[0];
   let final;
-  const built = buildFindings(kept, root, options, index, blockFor, (names) => {
+  const publicFor = (candidate) => {
+    const state = early.statusOf(candidate.file);
+    return state.status === "public" ? state.why : undefined;
+  };
+  const built = buildFindings(kept, root, options, index, blockFor, publicFor, (names) => {
     final = externalVerdicts(root, names, options);
     return final;
   });

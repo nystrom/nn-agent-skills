@@ -53,8 +53,10 @@ function run(root, args = [], env = {}) {
   return { status: result.status, stderr: result.stderr, stdout: result.stdout, document };
 }
 
-const FAST = ["--pace-ms", "0", "--retry-ms", "0"];
-const local = ["--no-external"];
+const FAST = ["--pace-ms", "0", "--retry-ms", "0", "--not-public", "."];
+const ext = ["--no-external"];
+// The user said nothing here is public API, so publication does not refuse.
+const local = [...ext, "--not-public", "."];
 
 const bySymbol = (document) => new Map(document.findings.map((f) => [f.symbol, f]));
 const names = (document, refused) =>
@@ -447,7 +449,7 @@ test("a Makefile owns the sources beside it", () => {
 });
 
 test("--accept-root other-repositories means --no-external", () => {
-  const result = run(repo(fixture), ["--accept-root", "other-repositories"], { DEAD_CODE_SCAN_GH: "/nonexistent/gh" });
+  const result = run(repo(fixture), ["--accept-root", "other-repositories", "--not-public", "."], { DEAD_CODE_SCAN_GH: "/nonexistent/gh" });
   assert.equal(bySymbol(result.document).get("tsDead").refused, false);
 });
 
@@ -469,4 +471,119 @@ test("readable files of unlisted languages are reported by extension", () => {
 test("validate rejects a refused script finding without a judgment", () => {
   const file = writeFindings([{ ...judged, refused: true, judgment: null }]);
   assert.equal(run(tempDir(), ["validate", file]).status, 2);
+});
+
+const library = {
+  "package.json": { name: "lib", main: "src/index.ts" },
+  "src/index.ts": "export function apiFn(): Handle {\n  return {};\n}\n",
+  "src/handle.ts": "export interface Handle {}\n",
+  "src/internal/util.ts": "export function internalExported() {}\n",
+};
+
+test("a published library's exported symbols are refused as public API", () => {
+  const document = run(repo(library), ext).document;
+  const found = bySymbol(document);
+  assert.equal(document.counts.reported, 0);
+  assert.equal(found.get("apiFn").category, "public-api");
+  assert.equal(found.get("internalExported").category, "public-api");
+  assert.ok(document.roots.found.some((r) => r.id === "public-api"));
+});
+
+test("a type exposed through a public signature is not a candidate", () => {
+  const found = bySymbol(run(repo(library), ext).document);
+  assert.equal(found.has("Handle"), false);
+});
+
+test("an internal symbol no root reaches is reported", () => {
+  const unpublished = { ...library, "package.json": { name: "lib", private: true, main: "src/index.ts" } };
+  const found = bySymbol(run(repo(unpublished), ext).document);
+  assert.equal(found.get("internalExported").refused, false);
+  assert.equal(found.get("apiFn").refused, false);
+});
+
+test("the user can say a path of a published library is not public", () => {
+  const found = bySymbol(run(repo(library), [...ext, "--not-public", "src/internal"]).document);
+  assert.equal(found.get("internalExported").refused, false);
+  assert.equal(found.get("apiFn").category, "public-api");
+});
+
+test("a search that finds nothing does not replace the public API root", () => {
+  const args = ["--pace-ms", "0", "--retry-ms", "0"];
+  const found = bySymbol(run(repo(library), args, { DEAD_CODE_SCAN_GH: fakeGh("") }).document);
+  assert.equal(found.get("apiFn").external, "none");
+  assert.equal(found.get("apiFn").category, "public-api");
+});
+
+test("unclear publication is an unresolved root until the user answers", () => {
+  const root = repo({ "pom.xml": "<project/>\n", "Foo.java": "public class Lib {}\n" });
+  const first = run(root, ext).document;
+  assert.ok(first.roots.unresolved.some((r) => r.id.startsWith("publication-status")));
+  assert.equal(bySymbol(first).get("Lib").category, "unevaluated-root");
+  assert.equal(bySymbol(run(root, [...ext, "--public-api", "."]).document).get("Lib").category, "public-api");
+  assert.equal(bySymbol(run(root, [...ext, "--not-public", "."]).document).get("Lib").refused, false);
+});
+
+test("a mix of published and unpublished packages asks which are public", () => {
+  const root = repo({
+    "a/package.json": { name: "a" },
+    "a/x.ts": "export function pubFn() {}\n",
+    "b/package.json": { name: "b", private: true },
+    "b/y.ts": "export function privFn() {}\n",
+  });
+  const document = run(root, ext).document;
+  assert.ok(document.roots.unresolved.some((r) => r.id === "public-api-scope"));
+  const found = bySymbol(document);
+  assert.equal(found.get("pubFn").category, "public-api");
+  assert.equal(found.get("privFn").category, "unevaluated-root");
+  const answered = run(root, [...ext, "--public-api", "a"]).document;
+  assert.equal(answered.roots.unresolved.some((r) => r.id === "public-api-scope"), false);
+  assert.equal(bySymbol(answered).get("privFn").refused, false);
+});
+
+test("the most specific public or private path wins, in either flag order", () => {
+  const root = repo({
+    "package.json": { name: "top", private: true },
+    "packages/lib/x.ts": "export function libFn() {}\n",
+    "tools/y.ts": "export function toolFn() {}\n",
+  });
+  for (const flags of [
+    ["--not-public", ".", "--public-api", "packages/lib"],
+    ["--public-api", "packages/lib", "--not-public", "."],
+  ]) {
+    const found = bySymbol(run(root, [...ext, ...flags]).document);
+    assert.equal(found.get("libFn").category, "public-api");
+    assert.equal(found.get("toolFn").refused, false);
+  }
+});
+
+test("equal public and private paths conflict", () => {
+  const result = run(repo(library), [...ext, "--public-api", "src", "--not-public", "src"]);
+  assert.equal(result.status, 2);
+});
+
+test("a Cargo workspace default does not make a package private", () => {
+  const root = repo({
+    "Cargo.toml": "[workspace.package]\npublish = false\n\n[package]\nname = \"r\"\n\n[lib]\n",
+    "src/lib.rs": "pub fn api() {}\n",
+  });
+  assert.equal(bySymbol(run(root, ext).document).get("api").category, "public-api");
+  const inherited = repo({
+    "Cargo.toml": "[package]\nname = \"r\"\npublish.workspace = true\n\n[lib]\n",
+    "src/lib.rs": "pub fn api() {}\n",
+  });
+  const document = run(inherited, ext).document;
+  assert.ok(document.roots.unresolved.some((r) => r.id.startsWith("publication-status")));
+});
+
+test("a root id with a colon can be accepted whole or by path", () => {
+  const root = repo({
+    "package.json": { name: "site", private: true, dependencies: { next: "14" } },
+    "pages/a/index.ts": "export function pageA() {}\n",
+    "pages/b/index.ts": "export function pageB() {}\n",
+  });
+  const whole = run(root, [...ext, "--accept-root", "framework:next"]).document;
+  assert.equal(bySymbol(whole).get("pageA").refused, false);
+  const scoped = bySymbol(run(root, [...ext, "--accept-root", "framework:next:pages/a"]).document);
+  assert.equal(scoped.get("pageA").refused, false);
+  assert.equal(scoped.get("pageB").category, "unevaluated-root");
 });
