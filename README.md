@@ -139,13 +139,16 @@ correct.
 
 ### layering-rules-check
 
-Checks layering rules that lint and the type checker usually do not enforce in a
-TypeScript or JavaScript repo: a production module that imports a test module,
-an importable `.js` file under `src` that `tsc` skips, a package that imports an
-undeclared workspace package, a barrel that re-exports another directory's
-module, and a dependency-table document that no longer matches the imports. A
-bundled Node script (no install) writes a JSON findings file and a ranked
-summary. It proposes edits and changes files only when asked.
+Checks layering rules that lint and the compiler do not enforce, in a repo in
+any programming language: a production module that imports a test module, a
+layer that imports a layer the rules forbid, a package that imports a package it
+does not declare, a barrel that re-exports another directory's module, and
+source files the repo's checkers skip. The model builds a layering rules file
+from the repo's docs and lint config, takes import edges from a language server
+(or text search when none exists), and checks them against the rules with a
+bundled Node script (no install). Findings are ranked, labeled by evidence
+source, and each carries a proposed change and a check that verifies it. The
+skill reports; it does not edit files.
 
 ## Install with Claude Code
 

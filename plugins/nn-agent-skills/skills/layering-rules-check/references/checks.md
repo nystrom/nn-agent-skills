@@ -1,138 +1,133 @@
 # Check catalog
 
-One entry per check in `scripts/scan.mjs`. Each entry gives the rule, the reason
-for it, the bounds of what the scan sees, and what it does not report. A check
+One entry per check in `scripts/check.mjs`. Each entry gives the rule, the reason
+for it, the bounds of what the check sees, and what it does not report. A check
 without a stated reason is a guess about the codebase, and a guess that fires is
 a bug report against correct code.
 
-The scan reads text with regular expressions. It has no parser and no module
-resolver. Imports are found in static `import` and `export ... from`,
-`import()`, and `require()` forms, after block comments and `//`
-comments are blanked. A `//` counts as a comment only when an even number of
-quote characters precede it on the line. A string that looks like an import inside code is a false
-match. Files over 2 MB, unreadable files, symlinks, and the directories
-`node_modules`, `.git`, `dist`, `build`, `out`, `coverage`, `.next`, `.turbo`,
-`.claude`, and `target` are not scanned. Skipped files that failed to read are
-listed in `skipped_files`.
+A script result is a candidate. It shows that a supplied or extracted edge, taken as
+correct, breaks the rules file. Text extraction and file resolution are
+approximations, an edge list is accepted as given, and the rules file can be
+wrong. None of this shows that the edge matters. The model reads the code and the callers to confirm,
+downgrade, or drop each candidate, and reads what the "Bound" lines below leave
+out (`SKILL.md`, "What the scan cannot see").
 
-Packages come from the root manifest `workspaces` field or `pnpm-workspace.yaml`
-when present, and from every `package.json` outside the ignored directories
-otherwise. Workspace patterns support `*`, `**`, and `!` exclusions. Brace
-alternatives are not supported. The YAML reader handles only a `packages:` list
-of `- pattern` lines. Files that fail to read are not scanned by any check. When member packages exist, the root manifest is not a package.
+The checks read an edge list and a rules file (`references/rules.md`). They have
+no parser and no knowledge of any language. Edges from a language server carry
+`evidence_source: "lsp"`. Edges from `scripts/edges.mjs` carry `text`: a regex
+read of import statements with comments blanked (a `//` counts as a comment only
+when an even number of quote characters precede it on the line). Files over
+2 MB, unreadable files, symlinks, and the directories `.git`, `node_modules`,
+`dist`, `build`, `out`, `coverage`, `target`, `vendor`, `__pycache__`, `.venv`,
+`.next`, `.turbo`, and `.claude` are not read. Skips that failed are listed in
+`skipped_files`. A file that is symlinked or skipped yields no edges and no
+findings.
 
 ## `test-import`
 
-A non-test module imports a module whose specifier ends in `.test`, `.spec`, or
-contains `/__tests__/`.
+A non-test file has an edge to a test file. A file is a test file when it
+matches `test_globs`, or the default name patterns when the rules file has none
+(`*.test.*`, `*.spec.*`, `__tests__/`, `test_*.py`, `*_test.py`, `*_test.go`,
+`*_test.rs`, `*Test.java`, `*Tests.java`, `*Test.kt`, `*Tests.kt`,
+`*_test.{c,cc,cpp}`, `runtests.jl`).
 
-- Why: layering rules and lint zones commonly skip test files, on the premise
-  that a test is a sink that nothing imports. A production import of a test
-  module breaks that premise and reaches whatever the test reaches, with no
-  zone in the way.
-- Refused: a file under a directory named `test`, `tests`, `__tests__`, or
-  `testing`. Such a file is test support and re-exports test helpers on
-  purpose. It is reported with severity `low` and `refused: true`.
-- Bound: relative specifiers only. A package that imports another package's
-  test entry through a bare specifier is not found.
+- Why: layering rules commonly skip test files, on the premise that a test is a
+  sink that nothing imports. A production import of a test file breaks that
+  premise and reaches whatever the test reaches, with no rule in the way.
+- Refused by the script: a file under a directory named `test`, `tests`, or
+  `testing`. Such a file is test support and publishes helpers on purpose. It is
+  reported with severity `low` and `refused: true`.
+- Bound: needs `to`. An edge with `to: null` is not seen. A test directory
+  convention that is not a name pattern needs `test_globs`.
 
-## `unchecked-source`
+## `layer-direction`
 
-A `.js`, `.jsx`, `.mjs`, or `.cjs` file under a package's `src/`, in a package
-whose nearest `tsconfig.json` (searched upward from the package) does not
-contain `"allowJs": true`.
+A non-test file in one layer has an edge to a file in another layer, and the
+`allow` list of the first layer omits the second.
 
-- Why: `tsc` reads only the extensions it is configured for, and lint scripts
-  often target `.ts` only. An import inside such a file is checked by neither.
-- Severity: `medium` when another scanned file imports it, `low` otherwise.
-- Bound: the scan tests `allowJs` with a text match on the nearest
-  `tsconfig.json`. A value inherited through `extends` is not seen, so a
-  package that enables `allowJs` in a base config gets a false report. It does
-  not read lint config. Packages with no `tsconfig.json` are skipped. Test
-  files are skipped.
+- Why: this is the rule a layer diagram or dependency table states. Lint zones
+  may already enforce it; run this check when they do not, or to find where lint
+  config and the document disagree.
+- Rows of a dependency table in a document become `layers` and `allow` entries.
+  A table row that omits an edge the code has is reported here, with the rules
+  file standing for the document. Update the table when the code is right.
+- Bound: files that no layer claims are not checked. A layer may always import
+  itself. Test files are skipped. The check does not report an `allow` entry
+  that no code uses, because an over-declared table does not mislead readers
+  about what is allowed.
 
 ## `undeclared-package-dep`
 
-A package imports a workspace package that its manifest does not list in
-`dependencies`, `devDependencies`, `peerDependencies`, or
-`optionalDependencies`.
+An edge between two packages of the rules file where the source package's
+`depends` omits the target. The target is found by `to` (the package whose
+`root` contains it) or, when `to` is `null`, by `specifier` matching an
+`import_names` entry of a package.
 
-- Why: workspace hoisting puts every package in the root `node_modules`, so the
-  import resolves inside the repo. It fails when the package is published and
-  installed on its own.
+- Why: path or workspace setup can make an undeclared import resolve inside the
+  repo. It fails when the package is built or installed on its own.
 - Production and test use are separate. A package imported only from tests
-  belongs in `devDependencies`, and the proposal says so. When production code
-  also imports it, only the production finding is reported.
+  needs a development dependency, and the proposal says so. When production code
+  also imports it, only the production finding is reported, and its `sources`
+  list both.
 - Bound: the check asks whether an edge is declared, not whether it points the
-  right way. A declared edge that inverts the intended package order passes.
-  Only names that match another workspace package's `name` are checked; an
-  undeclared third-party package is not.
+  right way. A declared edge that inverts the intended order passes. Packages
+  absent from the rules file are not checked. The rules file holds the declared
+  dependencies because manifest formats differ by language; the model builds
+  that list by reading the manifests.
 
 ## `foreign-barrel-reexport`
 
-An `index.{ts,tsx,js,mjs,cjs,...}` file with `export * from`, `export * as x
-from`, or `export { ... } from` a specifier that starts with `../`.
+A `reexport` edge in a barrel file whose target is outside the barrel's
+directory. Barrel files are `barrel_globs`, or `index.{ts,tsx,js,jsx,mjs,cjs}`,
+`__init__.py`, and `mod.rs` by default.
 
-- Why: every consumer of the barrel then depends on the other directory, and
-  the barrel misstates which directory owns the symbol.
-- Bound: files named `index` only. A barrel with another name is not found. A
-  comment may justify the re-export, for example to keep a published surface
-  after a symbol moved. A reviewer weighs that argument, so report it as a
+- Why: every consumer of the barrel then depends on the other directory, and the
+  barrel misstates which directory owns the symbol.
+- Bound: needs a `reexport` edge with `to`. `edges.mjs` marks `export ... from`
+  in TypeScript and JavaScript, `pub use` in Rust, and every import in a Python
+  `__init__.py` as a re-export. Other languages need edges from a language
+  server or the model's reading. A comment may justify the re-export, for
+  example to keep a published surface after a symbol moved. Report it as a
   question and do not decide.
 
-## `dependency-doc-drift`
+## `unchecked-source`
 
-A dependency-table document that omits an edge the code has.
+A file that matches an `unchecked` entry of the rules file and is not a test
+file.
 
-- Discovery: files named `DEPENDENCIES.md`, `LAYERS.md`, `LAYERING.md`, or
-  `ARCHITECTURE.md` (any case), or the file given with `--doc`. The skip is
-  recorded in `skipped_checks` when no document exists or no row matches.
-- Rows: a table row `| name | a, b |` is a row when `name` (without `*`, `_`,
-  or backticks) is a directory that sits next to the document. The second cell
-  lists the directories it may import, separated by commas. `_(none)_` means
-  none. Rows under a heading that contains "test" are skipped. When a directory
-  has several rows, their entries are united.
-- Method: each relative specifier in a production file under that directory is
-  resolved against the importing file, then reduced to its first directory next
-  to the document. A specifier such as `../binding/x` inside `language/typing`
-  resolves to `language/binding`, which is the same directory as the importer's
-  and not an edge.
-- Bound: one direction only. A row that lists an edge the code no longer has is
-  not reported. A table that over-declares does not mislead readers about what
-  is allowed, and fixing it is a judgment about intent. A table layout that
-  differs from the row shape above is not read. A document in prose is not read.
-- The imports are the fact and the table is the summary. The proposal is to
-  update the row, or to move the import when the edge should not exist.
+- Why: an import inside a file that the type checker or linter skips is checked
+  by neither tool.
+- Bound: the check lists files that the model already found by reading the
+  repo's checker config (type checker `include` and `exclude`, lint file
+  patterns, build target lists). It finds nothing the rules file does not name.
+  Settings inherited through config chains are easy to miss; read them.
 
 ## Repo-specific rules without a check
 
 Some layering rules exist in one repo only and have no generic form. Examples:
 a rule that a code-generation helper must not wrap a composed template literal,
 and a rule that every lint disable for one named project rule carries a reason.
-The scan has no check for such rules. Add one through the extension point below
-when the repo writes the rule down.
+The scripts have no check for such rules. Add one through the extension point
+below when the repo writes the rule down, or report violations as reviewer
+findings.
 
 ## Extension point
 
 A repo rule that nothing enforces can become a check. Add a function to the
-`CHECKS` array in `scripts/scan.mjs`. It takes the scan context and returns
-findings.
-
-The context has `root`, `files` (all root-relative POSIX paths), `sourceFiles`,
-`texts` (path to file text), `imports` (path to `[{specifier, line}]`),
-`packages` (`{dir, name, declared, manifestPath}`), and `options`. A finding
-needs `check`, `severity`, `file`, `signal`, `evidence`, and `proposal`; use the
-`finding()` helper to add `id` and `refused`.
+`CHECKS` array in `scripts/check.mjs`. It takes the context (`rules`, `edges`,
+`files`, and helpers) and returns findings, or `{skipped: reason}` when the
+rules file lacks its data. A finding needs `check`, `severity`, `file`,
+`signal`, `evidence`, `proposal`, and `verify`; use the `finding()` helper to
+add `id`, `source`, `evidence_source`, and `refused`. Put its data in the rules
+file and add the key to `RULE_KEYS`.
 
 Cite the document that states the rule in `evidence`. A rule with no written
-source is a guess. Test the new check in `scripts/scan.test.mjs` with a fixture
+source is a guess. Test the new check in `scripts/check.test.mjs` with a fixture
 that has one violation and one lookalike that must not fire.
 
 ## Not checked here
 
-- The layer stack itself. When a repo enforces it with lint zones, a second
-  implementation that reads prose would be a weaker answer to a solved
-  question.
-- Circular imports. Use the repo's own cycle tool (`madge --circular` or
-  similar).
+- Circular imports. Use the repo's own cycle tool.
 - Whether a package-level edge points the right way.
+- Symlinked files, files over 2 MB, and files in ignored directories. A
+  symlinked path given directly (for example a dependency document) is not read.

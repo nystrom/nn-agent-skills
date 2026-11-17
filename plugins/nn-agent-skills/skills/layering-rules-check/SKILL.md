@@ -1,102 +1,130 @@
 ---
 name: layering-rules-check
 description: >-
-  Check layering and abstraction rules that lint and the type checker do not
-  enforce in a TypeScript or JavaScript repo, mostly a monorepo. Finds a
-  production module that imports a test module, an importable .js, .mjs or
-  .cjs file under src that tsc skips, a package that imports a workspace
-  package its package.json does not declare, a barrel (index file) that
-  re-exports another directory's module, and a dependency-table document that
-  no longer matches the imports. Scans the tree with a bundled script, writes a
-  JSON findings file with a short ranked summary, and proposes edits. Edits
-  only when asked. Use when asked to check layering, module boundaries,
-  workspace dependencies, barrel exports, or whether a dependency document is
-  accurate.
+  Check layering and abstraction rules that lint and the compiler do not
+  enforce, in a repo written in any programming language. Finds a production
+  module that imports a test module, a layer that imports a layer the rules
+  forbid, a package that imports a package it does not declare, a barrel or
+  re-export file that re-exports another directory's module, and source files
+  that the repo's checkers skip. Builds a layering rules file from the repo's
+  docs and lint config, checks import edges from a language server (or text
+  search) against it, and reports ranked findings with a proposed change for
+  each. It does not edit files. Use when asked to check layering, module
+  boundaries, dependency direction, package dependencies, barrel exports, or
+  whether an architecture document matches the imports.
 ---
 
 # Layering Rules Check
 
-Repos state layering rules in lint zones, in style guides, and in documents
-such as a dependency table. Lint and `tsc` enforce only some of them. This
-skill finds code that breaks the rest and reports it with the evidence.
+Repos state layering rules in lint zones, style guides, contributor notes, and
+architecture documents. Lint and the compiler enforce only some of them. This
+skill finds code that breaks the rest and reports it with evidence.
 
-The scan is `scripts/scan.mjs` in this skill's directory. It needs Node 20 or
-newer and the files of the target repo. It installs nothing and reads no
-TypeScript compiler. Run it from the target repo; with no `--out` it prints the
-findings JSON.
+Contract: the output is findings. Each finding has a concrete proposed change
+(what to change, where, and the check that verifies it), written as text or a
+patch snippet in the report. The skill never edits files, commits, or opens or
+comments on pull requests or issues. The user, or a separate task, applies the
+changes. The scripts never write to the repo under review. They write only the
+file named with `--out`, and they refuse an `--out` path inside the repo
+(also through a symlink). Name a path outside the repo, for example under the
+system temp directory.
+
+## Method
+
+The method is language-neutral. Language facts (import syntax, manifests, test
+naming, re-export idioms, language servers) are in `references/languages.md`.
+
+1. **Read the rules.** Read the repo's own statement of its layering: style
+   guide, contributor notes, architecture and dependency documents, lint and
+   build config. Note every rule, enforced or not.
+2. **Write the rules file.** Turn the rules into data (`references/rules.md`):
+   layers, allowed directions, packages and their declared dependencies, test
+   and barrel classification, files the checkers skip, known intended
+   exceptions. Show the file to the user and get it confirmed before you rely
+   on it. A rule you cannot find written down is a guess; leave it out.
+3. **Get import edges.** Check whether a language server is configured or
+   startable for the language. Prefer it over text search: use find-references,
+   document and workspace symbols, and diagnostics to list which module imports
+   which. Write the edges in the edge-list format (`references/rules.md`) with
+   `evidence_source: "lsp"`. When no server exists, run `scripts/edges.mjs`
+   (text-based, optional, a table of import patterns per language) or use
+   `rg`/`git grep` and read the code. Say in the findings which evidence source
+   each result used: `lsp`, `text`, or `read`.
+4. **Run the check.** `scripts/check.mjs` evaluates the edges against the rules
+   file. Check machine load first.
+5. **Judge each result.** Read the code around every reported finding and every
+   refusal, and read its callers. Confirm, downgrade, or drop each one, and
+   write down which and why. A script verdict alone never justifies a proposed
+   change.
+6. **Survey what the script cannot see.** Read the rules in docs, lint config,
+   and contributor notes that no check enforces, then look for violations. Read
+   dynamic imports and runtime-built module names, the files in
+   `skipped_files`, and the neighborhood of each finding. Each result is a
+   reviewer finding.
+7. **Report.** Rank the findings. For each give the file, the line, the rule,
+   `source` (`script` or `reviewer`), `evidence_source`, the judgment
+   (confirmed, downgraded, dropped) with its reason, the proposed change, and
+   the check that verifies it. Name skipped checks and skipped files.
 
 ```bash
-node <skill-dir>/scripts/scan.mjs --out layering-findings.json
-node <skill-dir>/scripts/scan.mjs --scope packages/core --out /tmp/findings.json
-node <skill-dir>/scripts/scan.mjs --doc docs/DEPENDENCIES.md
+node <skill-dir>/scripts/edges.mjs --out /tmp/edges.json
+node <skill-dir>/scripts/check.mjs --rules /tmp/rules.json --edges /tmp/edges.json --out /tmp/findings.json
 ```
 
-| Option | Meaning |
-| ------ | ------- |
-| `--root <dir>` | Repo root. Default: git top level, else the working directory. |
-| `--scope <path>` | Keep findings whose file is under this path, relative to the root. A manifest or table finding also stays when an import it summarizes (its `sources`) is under the path. Repeatable. |
-| `--doc <file>` | Dependency-table document. Default: found by file name. |
-| `--out <file>` | Write the JSON here and print a ranked summary. |
-
-Exit status: 0 when nothing is reported, 1 when findings are reported, 2 when
-the scan cannot run. Refusals do not set status 1.
-
-## Workflow
-
-1. Read the repo's own statement of the rules first: the style guide, the
-   contributor notes, the lint config, and any dependency document. The scan
-   checks generic rules. A repo rule you find there can need a check of its own
-   (`references/checks.md`, "Extension point").
-2. Check machine load, then run the scan on the whole repo, or on `--scope` for
-   a large one.
-3. Read each reported finding in the code. The scan matches text; it does not
-   parse. Confirm the import is real and apply the refusal rules below.
-4. Report the findings, ranked, with the file, the line, the rule, and the
-   proposed change. Put the JSON path in the report.
-5. Edit only when the user asks. Fix one finding per change, because the
-   findings have little in common. Run the repo's lint, type check, and tests
-   on the touched packages afterward.
+`check.mjs` extracts edges itself when `--edges` is absent. Options: `--root`
+(default git top level), `--scope <path>` (repeatable, relative to the root),
+`--out`. Exit status: 0 when nothing is reported, 1 when findings are reported,
+2 when the check cannot run. Refusals do not set status 1. Both scripts need
+Node 20 or newer and nothing else.
 
 ## Checks
 
-| Check | Fires on |
-| ----- | -------- |
-| `test-import` | A non-test module that imports a `*.test.*`, `*.spec.*`, or `__tests__` module. |
-| `unchecked-source` | A `.js`, `.jsx`, `.mjs` or `.cjs` file under a package's `src/`, in a package whose nearest `tsconfig.json` does not set `allowJs`. |
-| `undeclared-package-dep` | A package that imports a workspace package its manifest does not declare. |
-| `foreign-barrel-reexport` | An `index` file with `export ... from "../..."`. |
-| `dependency-doc-drift` | A row of a dependency table that omits a directory its production modules import. |
+| Check | Fires on | Evidence it uses |
+| ----- | -------- | ---------------- |
+| `test-import` | A non-test module with an edge to a test module. | Edges (`lsp` or `text`); test classification from the rules file or name patterns. |
+| `layer-direction` | An edge from one layer to a layer its `allow` list omits. | Edges and the rules file. |
+| `undeclared-package-dep` | An edge between packages where the source package lists no such dependency. | Edges, and the package list in the rules file (built from manifests by reading). |
+| `foreign-barrel-reexport` | A re-export edge in a barrel file whose target is outside the barrel's directory. | Re-export edges (`lsp` or `text`). |
+| `unchecked-source` | A file that matches an `unchecked` entry of the rules file. | The rules file (built by reading lint and build config). |
 
-Each check, its bounds, and what it leaves out are in `references/checks.md`.
-Read it before you trust a result or report "no findings".
+Each check and its bounds are in `references/checks.md`. A check whose data is
+absent from the rules file is skipped and named in `skipped_checks`.
 
-## Evidence
+## What the scan cannot see
 
-Report a finding as a problem only when its check fired and no refusal rule
-applied. Each
-finding has an `evidence` field with the reason the rule exists. State that
-reason in your report, not only the match. If a rule comes from a repo
-document, cite the document.
+Look here yourself.
 
-A scan that finds nothing proves little when a check was skipped. The JSON lists
-`skipped_checks` and `skipped_files`. Name them in the report.
+| Check | Not seen by the scan |
+| ----- | -------------------- |
+| `test-import` | Imports built at run time; another package's test entry reached through a package name; test helpers in files that no pattern marks as tests. |
+| `layer-direction` | Edges the extractor cannot resolve to a file (`to: null`); imports through generated code, macros, or reflection; paths no layer claims. |
+| `undeclared-package-dep` | Whether a declared edge points the right way; third-party packages; package edges the rules file lacks. |
+| `foreign-barrel-reexport` | Barrels not named in the defaults or `barrel_globs`; a deep import that skips the owning directory's barrel; re-exports through a local alias. |
+| `unchecked-source` | Anything the rules file does not list; checker settings inherited through config chains you did not read. |
 
-## Refuse when
+The scan also does not see rules that exist only in docs, lint config, or
+contributor notes; files it skipped; or code in ignored directories (`.git`,
+`node_modules`, `vendor`, `target`, `build`, `dist`, and similar).
 
-The scan already marks the first case as `refused`. Check the others by hand.
+## Evidence and refusal
 
-- The importing file sits in a test directory and exists to publish test
-  helpers to other packages' tests. This is the intended shape of a test-support
-  barrel.
-- A document next to the code says the indirection is deliberate. Cite it and
-  report nothing.
-- A barrel re-export keeps a public API stable after a symbol moved, and a
-  comment says so. Report it as a question for the maintainer, with the
-  alternative.
-- The edge stays inside one top-level directory of a dependency table. The scan
-  does not count it. Do not add it by hand.
+Report a script finding as a problem only when its check fired, no refusal
+applied, and your reading of the code confirmed it. Report a reviewer finding
+only with the code you read and the rule it breaks. State the rule's reason, and
+cite the document when the rule comes from one.
 
-List each refusal in a separate part of the report, with its reason.
+Refuse (list separately, with the reason) when:
+
+- The importing file sits in a test-support directory and exists to publish test
+  helpers. The script marks this case `refused`.
+- A document next to the code says the indirection is deliberate.
+- A re-export keeps a public API stable after a symbol moved, and a comment says
+  so. Report it as a question for the maintainer, with the alternative.
+- The edge stays inside one layer or one top-level directory of a dependency
+  table.
+
+A finding resting on `text` evidence in a language whose import syntax the
+extractor does not cover is a guess. Confirm it by reading before you report it.
 
 ## Output
 
@@ -106,13 +134,17 @@ Each finding has:
 | Field | Meaning |
 | ----- | ------- |
 | `id` | Stable key: check, location, and a detail. |
-| `check` | Check name from the table above. |
+| `check` | Check name. |
+| `source` | `script`. Reviewer findings use `reviewer` in the report. |
+| `evidence_source` | `lsp`, `text`, or `read`. |
 | `severity` | `high`, `medium`, `low`, or `nit`. |
-| `file`, `line` | Location. `line` is absent when the finding is about a whole file or manifest. |
-| `signal` | What the scan saw. |
+| `file`, `line` | Location. `line` is absent for a whole-file finding. |
+| `signal` | What the check saw. |
 | `evidence` | Why the rule exists. |
-| `proposal` | The suggested change, or `none`. |
+| `proposal` | The proposed change, or `none`. |
+| `verify` | The check that shows the change worked. |
 | `refused`, `reason` | A refused finding states its reason. |
-| `sources` | Manifest and table findings only: the `file:line` imports they summarize. |
+| `sources` | Package findings only: the `file:line` imports they summarize. |
 
-The summary lists reported findings by severity, then notes skipped checks.
+The summary lists reported findings by severity, then skipped checks. Reviewer
+findings and the judgments appear in the report, not in the JSON.
