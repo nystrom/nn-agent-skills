@@ -298,6 +298,146 @@ test("every script finding has a change, a location, and a verify step", () => {
   }
 });
 
+function git(dir, ...args) {
+  const r = spawnSync("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", ...args], { cwd: dir, encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+}
+
+/** Two packages, each with a source file and a test file that has one lead. */
+function diffRepo() {
+  const dir = tempDir();
+  const testText = "package a\nfunc TestA(t *testing.T) { y := 1 }\n";
+  write(dir, {
+    "a/a.go": "package a\n",
+    "a/a_test.go": testText,
+    "b/b.go": "package b\n",
+    "b/b_test.go": testText,
+  });
+  git(dir, "init", "-q", "-b", "main");
+  git(dir, "add", "-A");
+  git(dir, "commit", "-q", "-m", "base");
+  git(dir, "checkout", "-q", "-b", "topic");
+  write(dir, { "a/a.go": "package a\n// changed\n" });
+  git(dir, "commit", "-qam", "change a");
+  return dir;
+}
+
+test("diff scope: candidates are the touched and neighboring test files; the repo is still counted", () => {
+  const dir = diffRepo();
+  const doc = JSON.parse(run(dir, ["--diff", "main"]).stdout);
+  assert.deepEqual(doc.findings.filter((f) => !f.refused).map((f) => f.file), ["a/a_test.go"]);
+  assert.equal(doc.scope.mode, "diff");
+  assert.equal(doc.scope.candidate_test_files, 1);
+  assert.equal(doc.scope.repo_test_files, 2);
+  assert.equal(doc.scope.changed_paths, 1);
+  const whole = JSON.parse(run(dir).stdout);
+  assert.equal(whole.scope.mode, "repo");
+  assert.equal(whole.counts.reported, 2);
+});
+
+test("diff scope: --working-tree adds uncommitted and untracked files; --scope intersects", () => {
+  const dir = diffRepo();
+  write(dir, { "b/b.go": "package b\n// dirty\n", "b/new_test.go": "package b\nfunc TestN(t *testing.T) { z := 1 }\n" });
+  const committed = JSON.parse(run(dir, ["--diff", "main"]).stdout);
+  assert.equal(committed.counts.reported, 1);
+  const dirty = JSON.parse(run(dir, ["--diff", "main", "--working-tree"]).stdout);
+  assert.deepEqual(dirty.findings.filter((f) => !f.refused).map((f) => f.file).sort(), ["a/a_test.go", "b/b_test.go", "b/new_test.go"]);
+  const narrowed = JSON.parse(run(dir, ["--diff", "main", "--working-tree", "--scope", "b"]).stdout);
+  assert.deepEqual(narrowed.findings.filter((f) => !f.refused).map((f) => f.file).sort(), ["b/b_test.go", "b/new_test.go"]);
+});
+
+test("diff scope: a change with no test file nearby is clean, a bad base exits 2", () => {
+  const dir = diffRepo();
+  write(dir, { "docs/readme.md": "x\n" });
+  git(dir, "add", "-A");
+  git(dir, "commit", "-qm", "docs");
+  git(dir, "checkout", "-q", "-b", "docs-only", "main");
+  write(dir, { "docs/readme.md": "y\n" });
+  git(dir, "add", "-A");
+  git(dir, "commit", "-qm", "docs only");
+  const clean = run(dir, ["--diff", "main"]);
+  assert.equal(clean.status, 0, clean.stderr);
+  assert.equal(JSON.parse(clean.stdout).counts.reported, 0);
+  const bad = run(dir, ["--diff", "no-such-ref"]);
+  assert.equal(bad.status, 2);
+  assert.match(bad.stderr, /cannot read the diff/);
+});
+
+test("diff scope: a deleted source file still selects the tests next to it", () => {
+  const dir = diffRepo();
+  git(dir, "rm", "-q", "b/b.go");
+  git(dir, "commit", "-qm", "delete b");
+  const doc = JSON.parse(run(dir, ["--diff", "main"]).stdout);
+  assert.deepEqual(doc.findings.filter((f) => !f.refused).map((f) => f.file).sort(), ["a/a_test.go", "b/b_test.go"]);
+});
+
+test("diff scope: --working-tree uses the net change, so a reverted file is not a candidate", () => {
+  const dir = diffRepo();
+  write(dir, { "a/a.go": "package a\n" });
+  const net = JSON.parse(run(dir, ["--diff", "main", "--working-tree"]).stdout);
+  assert.equal(net.scope.changed_paths, 0);
+  assert.equal(net.counts.reported, 0);
+});
+
+test("diff scope: candidate files with no recognized case exit 2", () => {
+  const dir = diffRepo();
+  write(dir, { "c/c_test.go": "package c\n// no cases\n", "c/c.go": "package c\n" });
+  git(dir, "add", "-A");
+  git(dir, "commit", "-qm", "c");
+  const r = run(dir, ["--diff", "main", "--scope", "c"]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /no test cases recognized/);
+});
+
+test("scope: the repo test file count ignores --scope", () => {
+  const dir = diffRepo();
+  const doc = JSON.parse(run(dir, ["--scope", "a"]).stdout);
+  assert.equal(doc.scope.mode, "paths");
+  assert.equal(doc.scope.candidate_test_files, 1);
+  assert.equal(doc.scope.repo_test_files, 2);
+});
+
+test("--out through a link into the repository exits 2", () => {
+  const dir = fixtureRepo();
+  const outside = tempDir();
+  symlinkSync(join(dir, "pkg", "a_test.go"), join(outside, "link.json"));
+  const r = run(dir, ["--out", join(outside, "link.json")]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /inside the repository/);
+  assert.match(readFileSync(join(dir, "pkg", "a_test.go"), "utf8"), /^package pkg/);
+});
+
+test("wire format: review-lens objects, mapped severities, headline on stdout", () => {
+  const dir = fixtureRepo();
+  const out = join(tempDir(), "wire.json");
+  const r = run(dir, ["--format", "wire", "--out", out]);
+  assert.equal(r.status, 1, r.stderr);
+  assert.equal(r.stdout.trim(), "needs-attention");
+  const list = JSON.parse(readFileSync(out, "utf8"));
+  assert.ok(list.length > 0);
+  for (const f of list) {
+    assert.deepEqual(Object.keys(f), ["source", "path", "line", "severity", "title", "body", "suggested_fix", "evidence"]);
+    assert.equal(f.source, "useless-test-pruner");
+    assert.ok(["blocker", "high", "medium", "low"].includes(f.severity));
+    assert.match(f.body, /origin: script; evidence source: text/);
+    assert.match(f.evidence, /^Inferred: text scan/);
+    assert.match(f.suggested_fix, /Verify: /);
+  }
+  const doc = JSON.parse(run(dir).stdout);
+  assert.equal(list.length, doc.counts.reported);
+  assert.ok(list.some((f) => f.severity === "low"), "a question maps to low");
+  const onStdout = JSON.parse(run(dir, ["--format", "wire"]).stdout);
+  assert.deepEqual(onStdout, list);
+});
+
+test("wire format: approve when nothing at medium or above is reported", () => {
+  const dir = tempDir();
+  write(dir, { "a_test.go": "package a\nfunc TestA(t *testing.T) { if f() != 1 { t.Fatal(1) } }\n" });
+  const r = run(dir, ["--format", "wire", "--out", join(tempDir(), "w.json")]);
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout.trim(), "approve");
+});
+
 test("severity: unresolved calls are a question, a bare case is medium", () => {
   const dir = fixtureRepo();
   const doc = JSON.parse(run(dir, ["--languages", "javascript"]).stdout);

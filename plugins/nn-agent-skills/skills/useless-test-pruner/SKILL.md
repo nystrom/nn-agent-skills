@@ -12,8 +12,8 @@ description: >-
   skipped cases, and cases that assert through a helper. Reports findings and
   proposed changes; never edits files. Use when asked to find useless, vacuous,
   tautological, or always-passing tests across a codebase, to prune a test
-  suite, or to audit test quality tree-wide. For a diff, use
-  test-coverage-code-review.
+  suite, or to audit test quality tree-wide, or as a review lens under
+  run-review-lenses. Reviews a change set or a whole repo.
 ---
 
 # Useless Test Pruner
@@ -33,6 +33,66 @@ patch snippet in the report. The user or a separate task applies it.
 it writes is the one named with `--out`, and it refuses an `--out` path inside
 the repository. Write your own report files (`reviewed.json`) outside the
 repository too, in the system temp directory or at a path the user names.
+
+## Review lens
+
+This skill is a review lens in this plugin. Read
+`../run-review-lenses/references/lens-protocol.md` and
+`../run-review-lenses/references/review-scope.md` and follow them.
+
+**Standalone** (a user invoked the skill): resolve the scope per
+`review-scope.md`, run the method below, and return the compact markdown report
+the protocol describes: a one-line verdict (`needs-attention` or `approve`), the
+mode and scope in one line, a short summary, and findings ranked by severity
+with file, line, impact, and the proposed change. Also report the refusal
+totals, the languages, and the evidence sources.
+
+**Fan-out** (the prompt says "structured findings" or names the wire format):
+use the scope the orchestrator passed and never re-derive it. Return only the
+structured list and a one-line headline, `needs-attention` or `approve`. No
+prose report. Do not act.
+
+Scope mapping:
+
+| Mode | Candidates | Evidence |
+| ---- | ---------- | -------- |
+| `diff` (default) | Test files the change touches, and test files next to a touched file, plus the cases in them. Derive the changed paths with `git diff --name-only <base>...HEAD` (and the working tree when asked). `scan.mjs --diff <base> [--working-tree]` does this. | Repo-wide: helper definitions, reference counts, and other tests that cover the same behavior. Never narrow evidence to the diff. |
+| `repo` | Every test file. | Repo-wide. |
+| `paths` | Test files under the named paths. `--scope <path>`. | Repo-wide. |
+
+`--diff` and `--scope` together give the named paths within the diff. The
+script's `scope` object counts candidate files against all test files in the
+repo, so a narrowed scan is visible. The script does not follow callers or
+other tests of the same code. For a changed source file, find the tests that
+cover it with the evidence sources below, and add them as candidates yourself.
+
+Wire format. Map each reported finding to this object:
+
+| Field | Value |
+| ----- | ----- |
+| `source` | `useless-test-pruner` |
+| `path`, `line` | The finding's file and line. |
+| `severity` | `high` to `high`, `medium` to `medium`, `question` to `low`, `low` to `low`. Use `blocker` only for a test that hides a known defect. |
+| `title` | Short heading naming the case and the defect. |
+| `body` | The defect and its impact. Name the origin (`script` or `reviewer`), the check (A, B, or C), and the evidence source. |
+| `suggested_fix` | The proposed change and the verify step. |
+| `evidence` | `Verified: ...` when you confirmed it with the language server or by reading, else `Inferred: ...`. Name the source (`lsp`, `text`, `read`). |
+
+`scan.mjs --format wire --out <file>` writes this array for the script's own
+unjudged leads and prints the script's headline. Do not return it as is. Build
+the final array from the findings that survive the judgment pass: your
+reviewer findings, and the script leads you confirmed or downgraded, with
+`evidence` and `suggested_fix` updated to what you checked. Compute the
+headline from the final array. The protocol field `source` is the skill slug,
+so the origin goes in `body`.
+
+Refusals are not findings in fan-out. List at most the few worth a look as
+`low`, with `suggested_fix` saying what to confirm.
+
+Overlap: `test-coverage-code-review` already has a section on useless tests in
+a diff. This lens adds script-backed evidence for a whole tree, a count of
+what each refusal removed, and the judgment pass with its gates. When both lens
+reports name the same case, the merge should keep one.
 
 ## Method
 
@@ -92,7 +152,10 @@ node <skill-dir>/scripts/scan.mjs --table my-language.json
 | Option | Meaning |
 | ------ | ------- |
 | `--root <dir>` | Repository root. Default: git top level, else the cwd. |
-| `--scope <path>` | Scan only this file or directory. Repeatable. |
+| `--scope <path>` | Scan only this file or directory. Repeatable. With `--diff`, only candidates inside these paths. |
+| `--diff <base>` | Report candidates only in test files the change touches or that sit next to a touched file. The whole repo is still counted. |
+| `--working-tree` | With `--diff`, include uncommitted and untracked files. |
+| `--format <json\|wire>` | `json` is the findings document. `wire` is the review-lens array; with `--out`, stdout gets the headline. |
 | `--exempt <path>` | Refuse every case in this file. Repeatable. |
 | `--languages <ids>` | Scan only these language ids. |
 | `--table <file.json>` | Add or replace language rows. See `languages.mjs` for the fields. |
@@ -100,7 +163,8 @@ node <skill-dir>/scripts/scan.mjs --table my-language.json
 
 Exit codes: 0 no findings reported, 1 findings reported, 2 the scan could not
 run (no test file matched a language row, no case was recognized, bad argument,
-a scope outside the root, an unexpected error). Refusals alone give 0.
+a scope outside the root, an unreadable diff base, an unexpected error).
+Refusals alone give 0. A `--diff` that touches no test file gives 0.
 
 Built-in rows with a fixture in `scripts/scan.test.mjs`: TypeScript (a `.ts`
 file with jest-style cases), Python (pytest and unittest), Go, Rust, Java

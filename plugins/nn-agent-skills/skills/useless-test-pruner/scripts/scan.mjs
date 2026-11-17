@@ -26,13 +26,23 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { GENERIC_ASSERT, LANGUAGES } from "./languages.mjs";
 
 const USAGE = `usage: scan.mjs [--root <dir>] [--scope <path>]... [--exempt <path>]...
+                [--diff <base>] [--working-tree] [--format json|wire]
                 [--languages <id,id>] [--table <file.json>] [--out <file>]
        scan.mjs --list-languages
 
 Reads test files and reports leads. Writes nothing to the repository.
 
   --root <dir>         Repository root. Default: git top level, else the cwd.
-  --scope <path>       Scan only this file or directory. Repeatable.
+  --scope <path>       Scan only this file or directory. Repeatable. With
+                       --diff, only candidates inside these paths.
+  --diff <base>        Report candidates only in test files that the change
+                       touches or that sit in a directory it touches
+                       (git diff --name-only <base>...HEAD). The whole repo is
+                       still read for the counts.
+  --working-tree       With --diff, also include uncommitted and untracked files.
+  --format <f>         json (default): the findings document. wire: a JSON
+                       array of review-lens findings, one per reported
+                       finding; with --out, stdout gets the headline only.
   --exempt <path>      Refuse every case in this file. Repeatable.
   --languages <ids>    Scan only these language ids, comma separated.
   --table <file.json>  JSON array of language rows (see languages.mjs). A row
@@ -63,6 +73,7 @@ function parseArgs(argv) {
   const opts = {
     root: null, scopes: [], exempt: [], out: null,
     languages: null, table: null, list: false,
+    diff: null, workingTree: false, format: "json",
   };
   const value = (i, flag) => argv[i] ?? fail(`${flag} needs a value\n${USAGE}`);
   for (let i = 0; i < argv.length; i += 1) {
@@ -74,6 +85,14 @@ function parseArgs(argv) {
       case "--languages": opts.languages = value(++i, "--languages").split(","); break;
       case "--table": opts.table = resolve(value(++i, "--table")); break;
       case "--list-languages": opts.list = true; break;
+      case "--diff": opts.diff = value(++i, "--diff"); break;
+      case "--working-tree": opts.workingTree = true; break;
+      case "--format":
+        opts.format = value(++i, "--format");
+        if (!["json", "wire"].includes(opts.format)) {
+          fail(`--format must be json or wire\n${USAGE}`);
+        }
+        break;
       case "-h":
       case "--help":
         process.stdout.write(USAGE);
@@ -794,9 +813,55 @@ function withProposal({ proposal, ...f }) {
   };
 }
 
+/** Paths the change touches, relative to the repo root. */
+function changedPaths(root, base, workingTree) {
+  const git = (args) =>
+    execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })
+      .split("\n")
+      .filter((line) => line !== "");
+  try {
+    if (!workingTree) {
+      return git(["diff", "--name-only", `${base}...HEAD`]);
+    }
+    // The net change from the merge base to the working tree. A committed
+    // change that an uncommitted edit reverses is not in it.
+    const mergeBase = git(["merge-base", base, "HEAD"])[0];
+    return [
+      ...new Set([
+        ...git(["diff", "--name-only", mergeBase]),
+        ...git(["ls-files", "--others", "--exclude-standard"]),
+      ]),
+    ];
+  } catch (error) {
+    return fail(`cannot read the diff against ${base}: ${String(error.stderr ?? error.message).trim()}`);
+  }
+}
+
+/**
+ * Candidates are the test files the change touches and the test files that
+ * sit next to a touched file. Callers and other tests of the same code are
+ * outside this set; finding them is evidence work for the reviewer.
+ */
+function candidateFilter(root, opts) {
+  if (opts.diff === null) {
+    return { test: () => true, changed: null };
+  }
+  // A deleted path still marks its directory: the tests next to it are affected.
+  const changed = changedPaths(root, opts.diff, opts.workingTree);
+  const dirs = new Set(changed.map((p) => posixDir(p)));
+  const files = new Set(changed);
+  return { test: (rel) => files.has(rel) || dirs.has(posixDir(rel)), changed };
+}
+
+const posixDir = (p) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : ".");
+
 function run(root, opts, languages) {
   const skipped = [];
   const all = discover(root, opts.scopes, skipped);
+  const filter = candidateFilter(root, opts);
+  // The count covers the whole repo even when --scope narrows the scan.
+  const everything = opts.scopes.length === 0 ? all : discover(root, [], []);
+  const repoTestFiles = everything.filter((rel) => languages.some((l) => l.filesRe.test(rel))).length;
   const exempt = new Set(opts.exempt.map((p) => toRel(root, p)));
   const raw = [];
   const warnings = [];
@@ -806,6 +871,9 @@ function run(root, opts, languages) {
   for (const rel of all) {
     const lang = languages.find((l) => l.filesRe.test(rel));
     if (lang === undefined) {
+      continue;
+    }
+    if (!filter.test(rel)) {
       continue;
     }
     files += 1;
@@ -832,10 +900,12 @@ function run(root, opts, languages) {
       ...result.refusals.map(({ proposal, ...r }) => ({ ...r, refused: true, severity: "low" })),
     );
   }
-  if (files === 0) {
+  if (repoTestFiles === 0) {
     fail("no test files matched a language row; check --scope, --languages, or add a row with --table");
   }
-  if (cases === 0) {
+  // A change with no candidate test file is a clean result. Candidate files
+  // with no recognized case are not: the row may not fit them.
+  if (cases === 0 && files > 0) {
     fail(`no test cases recognized in ${files} test files; the language row may not match this repo's test style`);
   }
   const rank = (f) => SEVERITY_ORDER.indexOf(f.severity);
@@ -852,7 +922,15 @@ function run(root, opts, languages) {
   return {
     tool: "useless-test-pruner",
     root,
-    scope: opts.scopes.length === 0 ? "." : opts.scopes.map((s) => toRel(root, s)).join(", "),
+    scope: {
+      mode: opts.diff !== null ? "diff" : opts.scopes.length > 0 ? "paths" : "repo",
+      base: opts.diff,
+      working_tree: opts.workingTree,
+      paths: opts.scopes.map((s) => toRel(root, s)),
+      changed_paths: filter.changed?.length ?? null,
+      candidate_test_files: files,
+      repo_test_files: repoTestFiles,
+    },
     generated_at: new Date().toISOString(),
     languages: perLanguage,
     counts: {
@@ -868,8 +946,32 @@ function run(root, opts, languages) {
   };
 }
 
+const WIRE_SEVERITY = { high: "high", medium: "medium", question: "low", low: "low" };
+
+/** The review-lens wire format: one object per reported finding. */
+function toWire(doc) {
+  return doc.findings
+    .filter((f) => !f.refused)
+    .map((f) => ({
+      source: "useless-test-pruner",
+      path: f.file,
+      line: f.line,
+      severity: WIRE_SEVERITY[f.severity],
+      title: f.stage === "A" ? `No assertion in case "${f.case}"` : `Assertion that holds for any input in case "${f.case}"`,
+      body: `[origin: ${f.source}; evidence source: ${f.evidence_source}; check ${f.stage}] ${f.signal}. ${f.evidence}`,
+      suggested_fix: `${f.change} Verify: ${f.verify}`,
+      evidence: `Inferred: ${f.evidence_source} scan of ${f.file}; confirm by resolving the calls with the language server or by reading the code.`,
+    }));
+}
+
+const headline = (doc) =>
+  doc.findings.some((f) => !f.refused && (f.severity === "high" || f.severity === "medium"))
+    ? "needs-attention"
+    : "approve";
+
 function summary(doc) {
   const lines = [
+    `scope: ${doc.scope.mode}${doc.scope.base ? ` against ${doc.scope.base}` : ""}; ${doc.scope.candidate_test_files} of ${doc.scope.repo_test_files} test files are candidates`,
     `useless-test-pruner: ${doc.counts.test_files} test files, ${doc.counts.cases} cases, ${doc.counts.candidates} candidates, ${doc.counts.refused} refused, ${doc.counts.reported} reported`,
   ];
   for (const [id, info] of Object.entries(doc.languages)) {
@@ -905,7 +1007,10 @@ function main() {
     while (!existsSync(existing)) {
       existing = dirname(existing);
     }
-    const target = join(realpathSync(existing), relative(existing, opts.out));
+    // An existing file at the path may be a link into the repository.
+    const target = existsSync(opts.out)
+      ? realpathSync(opts.out)
+      : join(realpathSync(existing), relative(existing, opts.out));
     const inside = toRel(realpathSync(root), target);
     if (!inside.startsWith("..") && !isAbsolute(inside)) {
       fail(`--out ${opts.out} is inside the repository; name a path outside it`);
@@ -913,12 +1018,13 @@ function main() {
     mkdirSync(dirname(opts.out), { recursive: true });
   }
   const doc = run(root, opts, languages);
-  const json = `${JSON.stringify(doc, null, 2)}\n`;
+  const wire = opts.format === "wire";
+  const json = `${JSON.stringify(wire ? toWire(doc) : doc, null, 2)}\n`;
   if (opts.out === null) {
     process.stdout.write(json);
   } else {
     writeFileSync(opts.out, json);
-    process.stdout.write(summary(doc));
+    process.stdout.write(wire ? `${headline(doc)}\n` : summary(doc));
   }
   return doc.counts.reported > 0 ? 1 : 0;
 }

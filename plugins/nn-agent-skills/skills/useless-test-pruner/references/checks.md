@@ -101,6 +101,19 @@ runs it for every case that asserts.
 - Names that a global, a build alias, or generated code provides look
   untethered. Confirm before proposing a deletion.
 
+## Scope
+
+With `--diff`, the script reports candidates in test files the change touches
+and in test files that share a directory with a touched file. It does not
+follow callers, imports, or other tests of the changed code. The reviewer adds
+those candidates, and computes evidence repo-wide. The `scope` object in the
+JSON counts candidate files against all test files in the repo, so a narrow
+scan is visible. A deleted file still selects the tests in its directory.
+`--working-tree` uses the net change from the merge base to the working tree,
+plus untracked files. A diff with no candidate test file is clean. Candidate
+files with no recognized case exit 2, because the language row may not fit
+them.
+
 ## Refusals
 
 | Refusal | Check | Reason |

@@ -147,8 +147,11 @@ finding says which. `scripts/scan.mjs` is a table-driven lead generator with no
 dependency beyond Node; adding a language means adding a row. It refuses
 snapshot-backed and skipped cases, and cases that assert through a helper in the
 same file, and counts each refusal.
-Every finding carries a proposed change, and the skill never edits files. For a
-diff, use `test-coverage-code-review`.
+Every finding carries a proposed change, and the skill never edits files. It
+reviews a diff or a whole repo, standalone or as a lens under
+`run-review-lenses`; it overlaps the useless-test section of
+`test-coverage-code-review` and adds script-backed whole-tree evidence and
+judgment gates.
 
 ## Install with Claude Code
 
