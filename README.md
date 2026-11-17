@@ -137,6 +137,16 @@ are characterization tests, written to a separate `*.generated` test file; an
 optional review pass on a stronger model judges whether each pinned behavior is
 correct.
 
+### layering-rules-check
+
+Checks layering rules that lint and the type checker usually do not enforce in a
+TypeScript or JavaScript repo: a production module that imports a test module,
+an importable `.js` file under `src` that `tsc` skips, a package that imports an
+undeclared workspace package, a barrel that re-exports another directory's
+module, and a dependency-table document that no longer matches the imports. A
+bundled Node script (no install) writes a JSON findings file and a ranked
+summary. It proposes edits and changes files only when asked.
+
 ## Install with Claude Code
 
 Add this marketplace, then install the plugin:
@@ -171,7 +181,7 @@ Invoke the skills as `$run-review-lenses`, `$adversarial-review`,
 `$dead-code-code-review`, `$ai-slop-code-review`, `$numerical-code-review`,
 `$codex-code-review` (which skips itself inside Codex),
 `$interactive-code-review`,
-`$ui-code-review`, `$concolic-test-generation`, or describe a matching task
+`$ui-code-review`, `$concolic-test-generation`, `$layering-rules-check`, or describe a matching task
 and let Codex select the skill.
 
 ## Install with Antigravity
