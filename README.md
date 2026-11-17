@@ -141,14 +141,14 @@ correct.
 
 Finds dead code in a repository in any programming language: declarations that
 nothing reaches from any root (entry points, the public API that other
-repositories use, tests, build targets, plugin and FFI exports). A text scan lists candidates and
-the roots it recognizes. The model then confirms each candidate from a language
-server, text search, or reading, surveys what the scan cannot see, and asks you
-which packages are public API and about roots it cannot evaluate before it
-reports anything as dead. The output
-is findings, each with a proposed change and the check that verifies it. The
-skill does not edit files, commit, or open pull requests. The scan needs Node
-and git, and `gh` for the cross-repository search.
+repositories use, tests, build targets, plugin and FFI exports). A text scan
+lists candidates and the roots it recognizes. The model then confirms each
+candidate from a language server, text search, or reading, surveys what the
+scan cannot see, and asks you which packages are public API and about roots it
+cannot evaluate before it reports anything as dead. The output is findings,
+each with a proposed change and the check that verifies it. The skill does not
+edit files, commit, or open pull requests. The scan needs Node and git, and
+`gh` for the cross-repository search.
 
 ## Install with Claude Code
 
