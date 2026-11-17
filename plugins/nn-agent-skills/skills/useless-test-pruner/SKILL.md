@@ -118,8 +118,51 @@ The script collects no mutation evidence. Its syntax checks support the claim
 that a case cannot fail. They do not prove it. State no kill rate you did not
 measure.
 
-Before you report a finding, open the file and read the case. The script is
-static and one file deep.
+The script is static and reads one file at a time. Its verdict is a lead. The
+judgment pass below decides.
+
+## What the script cannot see
+
+Look here yourself:
+
+- **Stage A.** A case that asserts through a helper reached by a global or by a
+  name the script does not resolve is reported. A case that fails by throwing on
+  purpose (`() => schema.parse(input)`) is reported when `schema` is not an
+  import. A case whose body is a
+  function reference (`it("x", runCase)`) is skipped. A case that calls an
+  imported symbol is refused without a look at that symbol.
+- **Stage B.** Only `expect(...)` chains are read, so `assert.equal(x, x)` and
+  other libraries are not. A getter on a repeated reference is reported as a
+  proof. An assertion that is weak but not a tautology (`toBeDefined` on a wide
+  value, `toBeTruthy` on an object) is not reported.
+- **Stage C.** Code reached through a global, a per-package alias, or a bundler
+  alias looks untethered or looks like a dependency. A case that asserts through
+  a helper imported from the repo is not followed: it counts as reaching the
+  repo, so it gets no finding. A case that asserts through a dependency's
+  helper is refused.
+- **Everything.** Duplicate cases, mocks that assert on themselves, test files
+  in other languages, files in `skipped_files`, and tests under names the
+  script does not match.
+
+## Judgment pass
+
+Run it after the script. A script verdict alone never justifies an edit or a
+deletion.
+
+1. Read the code around every reported finding and every refusal group. Read
+   the case, the code it calls, and the callers of any helper. Confirm or
+   overturn each from that code.
+2. Mark each reported finding `confirmed`, `downgraded`, or `dropped`, with one
+   line of reason. Overturn a refusal only with a reason from the code.
+3. For each proposed deletion, state what behavior the test was meant to pin,
+   and confirm that another test or the type system covers it. If neither does,
+   propose a repaired assertion, not a deletion.
+4. Survey the same defect class where the script cannot look: tests that assert
+   only through helpers, assertions that pass for any output (weak matchers on
+   wide values, mocks that assert on themselves, cases that differ only in
+   their names), test files in other languages, and files in `skipped_files`.
+   Inspect each candidate. A shape alone is not a defect. Report a reviewer
+   finding only when you confirm the case cannot fail.
 
 ## Refusals
 
@@ -148,10 +191,16 @@ A refused candidate is not a finding. The JSON keeps it with its reason, and
 
 ## Output
 
-Write `findings.json` (the script's output) and give a short ranked summary:
-the counts line, then each reported finding as `severity [stage] file:line`,
-the signal, and the proposal, then the refusal totals. Rank `high`, `medium`,
-`question`.
+`findings.json` is the script's output. Each finding has `source: "script"`.
+Keep it as written. Put the judgments and the reviewer findings in a separate
+file, `reviewed.json`, as a copy of the findings with a `judgment` and a
+`reason` on each script finding, plus the reviewer findings. Give a short
+ranked summary:
+the counts line, then each finding as `severity [source] file:line`, the signal
+or defect, the judgment (`confirmed`, `downgraded`, `dropped`) with its reason,
+and the proposal, then the refusal totals. Label reviewer findings from the
+survey `source: reviewer` and list them with the script's findings. Rank
+`high`, `medium`, `question`.
 
 ## Proposing edits
 
@@ -165,6 +214,8 @@ make one change per finding:
 - Stage B, existence matcher or `expect.anything()`: assert the value.
 - Stage A: restore the assertion the title names, or delete the case.
 - Stage C: confirm the case covers nothing the repo owns, then delete it.
+- Reviewer finding: the same rules apply. State the pinned behavior and its
+  other coverage before a deletion.
 
 Restore an assertion in preference to deleting a case whose title names a
 property. The title shows someone meant to check it. Delete when a sibling

@@ -165,6 +165,7 @@ test("reports and refuses as designed", needTs, () => {
     assert.match(reasons, new RegExp(expected), expected);
   }
   assert.equal(doc.counts.candidates, reported.length + refused.length);
+  assert.ok(doc.findings.every((f) => f.source === "script"));
   assert.deepEqual(doc.own_packages, ["@fixture/lib", "fixture"]);
   assert.deepEqual(doc.own_aliases, ["@app/"]);
   // Snapshot, `.not`, skipped, todo and xit cases are never candidates.

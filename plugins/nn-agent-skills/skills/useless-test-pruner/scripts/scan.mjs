@@ -1025,7 +1025,7 @@ function scan(ts, root, opts) {
       refused_by_reason: refusedByReason,
     },
     skipped_files: skipped,
-    findings: sorted,
+    findings: sorted.map((f) => ({ source: "script", ...f })),
   };
 }
 

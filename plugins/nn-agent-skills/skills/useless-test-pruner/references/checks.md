@@ -15,6 +15,10 @@ The stages fail in opposite directions, which sets their severities:
   test, so every stage C finding is `question` and proposes "confirm, then
   delete".
 
+Each stage reports a syntax shape and does not prove the case is useless. The
+judgment pass in `SKILL.md` confirms, downgrades, or drops every finding from
+the code, and `SKILL.md` lists what the script cannot see.
+
 The script has no baseline counts. A run on a repo you know that returns far
 more or far fewer candidates than the suite's size suggests means a stage or
 the repo discovery is wrong. Read a sample of each stage's output before
@@ -126,6 +130,7 @@ not refused, so read each reported stage A case.
 - `expectTypeOf` and `@ts-expect-error` cases. A type-level assertion fails in
   the type checker, not at runtime. The scan treats `expectTypeOf(...)` as an
   assertion helper by name and does not look for `@ts-expect-error` comments.
-- Duplicate cases and cases that test only a mock. Those need a semantic
-  reading, not a syntax scan.
+- Duplicate cases, cases that test only a mock, weak matchers on wide values,
+  and test files in other languages. Those need the survey in `SKILL.md`, not a
+  syntax scan.
 - A file with syntax errors. The scan skips it and lists it in `skipped_files`.
