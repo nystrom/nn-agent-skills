@@ -137,6 +137,16 @@ are characterization tests, written to a separate `*.generated` test file; an
 optional review pass on a stronger model judges whether each pinned behavior is
 correct.
 
+### duplicate-function-unifier
+
+Finds JavaScript and TypeScript functions whose bodies are identical once
+comments and whitespace are removed, and proposes keeping one copy. A script
+groups the duplicates and reports where a shared function can live, who calls
+each exported name (in-repo, and other repos with `gh search code` when
+available), and nearby layering docs. It refuses groups that look deliberate,
+have no allowed home, or have an unknown consumer. It writes a findings file and
+a ranked summary, and edits only when asked.
+
 ## Install with Claude Code
 
 Add this marketplace, then install the plugin:
@@ -171,7 +181,7 @@ Invoke the skills as `$run-review-lenses`, `$adversarial-review`,
 `$dead-code-code-review`, `$ai-slop-code-review`, `$numerical-code-review`,
 `$codex-code-review` (which skips itself inside Codex),
 `$interactive-code-review`,
-`$ui-code-review`, `$concolic-test-generation`, or describe a matching task
+`$ui-code-review`, `$concolic-test-generation`, `$duplicate-function-unifier`, or describe a matching task
 and let Codex select the skill.
 
 ## Install with Antigravity
