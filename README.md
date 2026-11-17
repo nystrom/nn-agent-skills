@@ -139,7 +139,8 @@ correct.
 
 ### unused-abstraction-scan
 
-Finds indirection that no code reads, in any language: a field whose comment
+A review lens, also usable on its own, on a change set or a whole repo. Finds
+indirection that no code reads, in any language: a field whose comment
 says it has no effect, a parameter or type with zero readers, and an options
 type with no members. The model uses a language server when one is available
 and falls back to text search and reading. Text-based helper scripts (Node 20+,

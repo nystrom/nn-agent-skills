@@ -368,6 +368,154 @@ test("bad arguments exit 2", () => {
   assert.equal(survey(dir, ["report", "/no/such/file.json"]).status, 2);
 });
 
+const gitEnv = {
+  GIT_AUTHOR_NAME: "t",
+  GIT_AUTHOR_EMAIL: "t@example.com",
+  GIT_COMMITTER_NAME: "t",
+  GIT_COMMITTER_EMAIL: "t@example.com",
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_SYSTEM: "/dev/null",
+};
+
+function git(dir, ...args) {
+  const run = spawnSync("git", args, { cwd: dir, encoding: "utf8", env: { ...process.env, ...gitEnv } });
+  assert.equal(run.status, 0, run.stderr);
+  return run.stdout;
+}
+
+/** Base commit on main with `old.ts`; branch `feature` adds `new.ts` and reads `Old`. */
+function makeGitRepo() {
+  const dir = makeRepo({
+    "src/old.ts": "export interface Old {\n  /** has no effect */\n  legacy?: boolean;\n}\n",
+  });
+  git(dir, "init", "-q", "-b", "main");
+  git(dir, "add", "-A");
+  git(dir, "commit", "-q", "-m", "base");
+  git(dir, "checkout", "-q", "-b", "feature");
+  writeFileSync(join(dir, "src/new.ts"), 'import { Old } from "./old";\n/** does nothing */\nexport const flag = 1;\nexport const o: Old = {};\n');
+  git(dir, "add", "-A");
+  git(dir, "commit", "-q", "-m", "change");
+  return dir;
+}
+
+test("diff-scope lists files changed against the base", () => {
+  const dir = makeGitRepo();
+  assert.deepEqual(survey(dir, ["diff-scope", "--base", "main"]).json.paths, ["src/new.ts"]);
+  writeFileSync(join(dir, "src/old.ts"), "export interface Old {}\n");
+  writeFileSync(join(dir, "src/untracked.ts"), "export const u = 1;\n");
+  const withTree = survey(dir, ["diff-scope", "--base", "main", "--working-tree"]).json;
+  assert.deepEqual(withTree.paths, ["src/new.ts", "src/old.ts", "src/untracked.ts"]);
+  assert.equal(survey(dir, ["diff-scope", "--base", "nope"]).status, 2);
+});
+
+test("--working-tree uses the net change: a reverted commit does not count", () => {
+  const dir = makeGitRepo();
+  git(dir, "rm", "-q", "src/new.ts");
+  const net = survey(dir, ["diff-scope", "--base", "main", "--working-tree"]).json.paths;
+  assert.deepEqual(net, []);
+});
+
+test("--base accepts a range, and a range with --working-tree is refused", () => {
+  const dir = makeGitRepo();
+  assert.deepEqual(survey(dir, ["diff-scope", "--base", "main..feature"]).json.paths, ["src/new.ts"]);
+  assert.deepEqual(survey(dir, ["diff-scope", "--base", "main...feature"]).json.paths, ["src/new.ts"]);
+  assert.equal(survey(dir, ["diff-scope", "--base", "main..main", "--working-tree"]).status, 2);
+  assert.deepEqual(survey(dir, ["diff-scope", "--base", "main..main"]).json.paths, []);
+});
+
+test("--diff limits candidates to changed files and reports the scope", () => {
+  const dir = makeGitRepo();
+  const all = survey(dir, ["inert"]).json;
+  assert.ok(all.candidates.some((c) => c.file === "src/old.ts"));
+  assert.equal(all.scope.mode, "repo");
+
+  const { json } = survey(dir, ["inert", "--diff", "--base", "main"]);
+  assert.deepEqual(json.candidates.map((c) => c.file), ["src/new.ts"]);
+  assert.equal(json.scope.mode, "diff");
+  assert.equal(json.scope.base, "main");
+  assert.equal(json.scope.changedFiles, 1);
+});
+
+test("--diff and --scope must both hold", () => {
+  const dir = makeGitRepo();
+  const miss = survey(dir, ["inert", "--diff", "--base", "main", "--scope", "src/old.ts"]).json;
+  assert.deepEqual(miss.candidates, []);
+  const hit = survey(dir, ["inert", "--diff", "--base", "main", "--scope", "src"]).json;
+  assert.equal(hit.candidates.length, 1);
+});
+
+test("--diff also limits empty-types and ignored candidates", () => {
+  const dir = makeGitRepo();
+  writeFileSync(join(dir, "src/new.ts"), "export interface Fresh {}\nexport function f(_options?: Fresh) {}\n");
+  git(dir, "add", "-A");
+  git(dir, "commit", "-q", "-m", "more");
+  const empty = survey(dir, ["empty-types", "--diff", "--base", "main"]).json;
+  assert.deepEqual(empty.candidates.map((c) => c.name), ["Fresh"]);
+  const ignoredNames = survey(dir, ["ignored", "--diff", "--base", "main"]).json;
+  assert.deepEqual(ignoredNames.candidates.map((c) => c.file), ["src/new.ts"]);
+});
+
+test("evidence is repo-wide even when candidates come from the diff", () => {
+  const dir = makeGitRepo();
+  const { json } = survey(dir, ["refs", "legacy"]);
+  assert.ok(json.hits.some((h) => h.file === "src/old.ts"));
+  assert.equal(survey(dir, ["refs", "legacy", "--scope", "src/new.ts"]).status, 2);
+  const verdictRun = survey(dir, ["verdict", "Old", "src/old.ts", "--offline"]).json;
+  assert.equal(verdictRun.verdict, "internal-only");
+});
+
+test("report --wire prints review-lens findings and a headline", () => {
+  const dir = makeRepo();
+  const run = spawnSync(process.execPath, [cli, "report", "-", "--wire"], {
+    cwd: dir,
+    encoding: "utf8",
+    input: JSON.stringify([
+      finding(),
+      finding({ id: "r1", source: "reviewer", evidenceSource: "read", severity: "low", symbol: "wrap" }),
+      finding({ id: "k1", refused: true, reason: "verdict unknown", proposal: "none", confirm: "that no other package imports it", worthALook: true }),
+      finding({ id: "k2", refused: true, reason: "not interesting", proposal: "none" }),
+      finding({ id: "d1", judgment: "dropped" }),
+    ]),
+  });
+  assert.equal(run.status, 1);
+  assert.equal(run.stderr, "headline: needs-attention\n");
+  const wire = JSON.parse(run.stdout);
+  assert.equal(wire.length, 3);
+  for (const item of wire) {
+    assert.deepEqual(Object.keys(item), ["source", "path", "line", "severity", "title", "body", "suggested_fix", "evidence"]);
+    assert.equal(item.source, "unused-abstraction-scan");
+  }
+  assert.equal(wire[0].severity, "medium");
+  assert.equal(wire[0].suggested_fix, "delete the field and run the type check");
+  assert.match(wire[0].evidence, /^Verified: text\+read; finding source: script;/);
+  assert.match(wire[1].evidence, /^Inferred: read; finding source: reviewer;/);
+  assert.equal(wire[2].severity, "low");
+  assert.equal(wire[2].suggested_fix, "Confirm: that no other package imports it");
+});
+
+test("report --wire headline follows the emitted list", () => {
+  const dir = makeRepo();
+  const run = spawnSync(process.execPath, [cli, "report", "-", "--wire"], {
+    cwd: dir,
+    encoding: "utf8",
+    input: JSON.stringify([finding({ refused: true, reason: "unknown", proposal: "none", worthALook: true })]),
+  });
+  assert.equal(JSON.parse(run.stdout).length, 1);
+  assert.equal(run.stderr, "headline: needs-attention\n");
+});
+
+test("report --wire with nothing reported gives an empty list and approve", () => {
+  const dir = makeRepo();
+  const run = spawnSync(process.execPath, [cli, "report", "-", "--wire"], {
+    cwd: dir,
+    encoding: "utf8",
+    input: JSON.stringify([finding({ judgment: "dropped" })]),
+  });
+  assert.equal(run.status, 0);
+  assert.equal(run.stderr, "headline: approve\n");
+  assert.deepEqual(JSON.parse(run.stdout), []);
+});
+
 test("report reads findings from stdin", () => {
   const dir = makeRepo();
   const run = spawnSync(process.execPath, [cli, "report", "-"], {

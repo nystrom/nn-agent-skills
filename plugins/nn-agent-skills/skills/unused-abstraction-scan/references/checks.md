@@ -11,6 +11,15 @@ comes from a language server (`lsp`) when one is available, from text search
 name has no match, not that nothing uses the thing. Each "Bound" below is a
 place where the model reads the code itself.
 
+## Scope
+
+A scope (`--diff`, `--scope`) limits which files may yield candidates. It never
+limits evidence: `refs` and `verdict` search the whole tree. A change that
+removes the last reader of a field makes a candidate in a file the change did
+not touch. The scope flags cannot see that, so the model finds it by reading
+the removed lines. `--diff` also cannot see a candidate whose declaration moved
+without its comment. Read the diff for those.
+
 ## What counts as a read
 
 - With `lsp`: a reference that the server resolves to the declaration and that

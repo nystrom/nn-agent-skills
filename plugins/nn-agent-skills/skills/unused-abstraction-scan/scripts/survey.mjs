@@ -38,14 +38,27 @@ Commands:
   ignored [--pattern <regex>]   Identifiers like _options (default
                                 ^_\\w*(options?|opts|config|cfg|settings)\\w*$).
   verdict <symbol> <file>       Consumer verdict for a symbol declared in file.
-  report <findings.json|-> [--out <file>]
+  diff-scope [--base <ref>] [--working-tree]
+                                Files changed against the base (default
+                                origin/main, else origin/master).
+  report <findings.json|-> [--out <file>] [--wire]
                                 Validate findings (- reads stdin), print a
                                 ranked summary, and write the result to <file>
-                                when given. Writes nothing else.
+                                when given. With --wire, print the review-lens
+                                JSON array instead of the summary. Writes
+                                nothing else.
 
-Options for every command except report:
-  --scope <path>   Report only matches under this path. Repeatable.
-  --ext <.ext>     Treat this extension as source. Repeatable.
+Options for inert, empty-types, and ignored (they limit candidates only;
+refs and verdict always search the whole tree):
+  --scope <path>      Candidates only under this path. Repeatable.
+  --diff              Candidates only in files changed against the base.
+  --base <ref>        Base for --diff (default origin/main, else origin/master).
+                      A range base..head also works; pass a pull request as
+                      its base and head refs.
+  --working-tree      With --diff, add uncommitted and untracked files.
+  With --diff and --scope, a file must satisfy both.
+Options for every command that reads source:
+  --ext <.ext>        Treat this extension as source. Repeatable.
 Options for verdict:
   --offline              Skip the gh search.
   --assume-unpublished   Treat every package as unpublished.
@@ -239,15 +252,77 @@ const meta = (tree) => ({
   excludedDirs: tree.excludedDirs,
 });
 
-function scopeFilter(root, scopeArgs) {
-  const scopes = scopeArgs.map((scope) => {
+/**
+ * Files changed against a base: `git diff --name-only <base>...HEAD`, plus the
+ * working tree and untracked files when asked. A renamed file counts under its
+ * new path.
+ */
+function changedPaths(root, spec, workingTree) {
+  // `spec` is a ref, or a range `base..head` or `base...head`. A pull request
+  // is passed as its base and head refs in that form.
+  const [left, right] = spec === null ? [null, "HEAD"] : spec.split(/\.{2,3}/);
+  const head = right === undefined || right === "" ? "HEAD" : right;
+  const verify = (ref) =>
+    tryExec("git", ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], root) !== null;
+  const ref = (left === null ? ["origin/main", "origin/master"] : [left]).find(verify);
+  ref === undefined &&
+    fail(`no base ref found${left === null ? " (tried origin/main, origin/master)" : `: ${left}`}`);
+  verify(head) || fail(`no head ref found: ${head}`);
+  workingTree && head !== "HEAD" && fail("--working-tree needs a head of HEAD");
+  const mergeBase = tryExec("git", ["merge-base", ref, head], root)?.trim() ?? null;
+  mergeBase === null && fail(`no merge base between ${ref} and ${head}`);
+  const names = (args) => (tryExec("git", args, root) ?? "").split("\0").filter(Boolean);
+  // With the working tree, the net change is merge base to working tree, so a
+  // committed change that was reverted does not count. Untracked files are new.
+  const paths = new Set(
+    workingTree
+      ? [
+          ...names(["diff", "--name-only", "-z", mergeBase]),
+          ...names(["ls-files", "-z", "--others", "--exclude-standard"]),
+        ]
+      : names(["diff", "--name-only", "-z", `${ref}...${head}`])
+  );
+  return { base: ref, head, mergeBase, workingTree, paths: [...paths].sort() };
+}
+
+/**
+ * Which files may yield candidates. Evidence searches never use this: readers
+ * and callers are always searched in the whole tree.
+ *
+ * - `--diff [--base <ref>] [--working-tree]`: files changed against the base.
+ * - `--scope <path>`: named paths. With `--diff`, both must hold.
+ */
+function scopeFilter(root, options) {
+  const scopes = options.scope.map((scope) => {
     const rel = toPosix(relative(root, resolve(process.cwd(), scope)));
     (rel === ".." || rel.startsWith("../")) && fail(`scope ${scope} is outside ${root}`);
     return rel.replace(/\/+$/, "");
   });
-  return (file) =>
-    scopes.length === 0 ||
-    scopes.some((s) => s === "" || file === s || file.startsWith(`${s}/`));
+  const diff = options.diff
+    ? changedPaths(root, options.base[0] ?? null, options["working-tree"] === true)
+    : null;
+  const changed = diff === null ? null : new Set(diff.paths);
+  const inScope = (file) =>
+    (changed === null || changed.has(file)) &&
+    (scopes.length === 0 ||
+      scopes.some((s) => s === "" || file === s || file.startsWith(`${s}/`)));
+  const mode = diff !== null ? "diff" : scopes.length > 0 ? "paths" : "repo";
+  return {
+    inScope,
+    scope: {
+      mode,
+      ...(diff === null ? {} : { base: diff.base, head: diff.head, mergeBase: diff.mergeBase, workingTree: diff.workingTree, changedFiles: diff.paths.length }),
+      ...(scopes.length === 0 ? {} : { paths: scopes }),
+      candidatesOnly: true,
+    },
+  };
+}
+
+function diffScope(args) {
+  const options = parseOptions(args, ["base"], ["working-tree"]);
+  const top = tryExec("git", ["rev-parse", "--show-toplevel"], process.cwd());
+  top === null && fail("not inside a git repository");
+  return changedPaths(resolve(top.trim()), options.base[0] ?? null, options["working-tree"] === true);
 }
 
 const wordPattern = (name) => new RegExp(`(?<![\\w$])${escapeRegExp(name)}(?![\\w$])`);
@@ -255,9 +330,9 @@ const wordPattern = (name) => new RegExp(`(?<![\\w$])${escapeRegExp(name)}(?![\\
 // --- inert -------------------------------------------------------------
 
 function inert(args) {
-  const options = parseOptions(args, ["scope", "ext", "phrase"], []);
+  const options = parseOptions(args, ["scope", "ext", "phrase", "base"], ["diff", "working-tree"]);
   const tree = loadTree(options.ext);
-  const inScope = scopeFilter(tree.root, options.scope);
+  const { inScope, scope } = scopeFilter(tree.root, options);
   const phrases = options.phrase.length > 0 ? options.phrase : INERT_PHRASES;
   const pattern = new RegExp(phrases.map(escapeRegExp).join("|"), "i");
   const candidates = [];
@@ -285,17 +360,17 @@ function inert(args) {
       });
     });
   }
-  return { candidates, ...meta(tree) };
+  return { scope, candidates, ...meta(tree) };
 }
 
 // --- refs --------------------------------------------------------------
 
 function refs(args) {
-  const options = parseOptions(args, ["scope", "ext"], []);
+  // No scope options: readers are always searched in the whole tree.
+  const options = parseOptions(args, ["ext"], []);
   const [name] = options._;
   name === undefined && fail("refs needs a name");
   const tree = loadTree(options.ext);
-  const inScope = scopeFilter(tree.root, options.scope);
   const word = wordPattern(name);
   const escaped = escapeRegExp(name);
   // `.name`, `->name`, `::name`: a member access reads. A declaration or a
@@ -305,9 +380,6 @@ function refs(args) {
   const hits = [];
 
   for (const [file, { code, test }] of tree.sources) {
-    if (!inScope(file)) {
-      continue;
-    }
     code.forEach((line, index) => {
       if (!word.test(line)) {
         return;
@@ -350,9 +422,9 @@ const EMPTY_FORMS = [
 ];
 
 function emptyTypes(args) {
-  const options = parseOptions(args, ["scope", "ext"], []);
+  const options = parseOptions(args, ["scope", "ext", "base"], ["diff", "working-tree"]);
   const tree = loadTree(options.ext);
-  const inScope = scopeFilter(tree.root, options.scope);
+  const { inScope, scope } = scopeFilter(tree.root, options);
   const found = [];
 
   for (const [file, { lines, test, code }] of tree.sources) {
@@ -382,15 +454,15 @@ function emptyTypes(args) {
       found.push({ file, line: index + 1, name, usesInFile: uses, usesInOtherProductionFiles: elsewhere });
     });
   }
-  return { candidates: found, ...meta(tree) };
+  return { scope, candidates: found, ...meta(tree) };
 }
 
 // --- ignored -----------------------------------------------------------
 
 function ignored(args) {
-  const options = parseOptions(args, ["scope", "ext", "pattern"], []);
+  const options = parseOptions(args, ["scope", "ext", "pattern", "base"], ["diff", "working-tree"]);
   const tree = loadTree(options.ext);
-  const inScope = scopeFilter(tree.root, options.scope);
+  const { inScope, scope } = scopeFilter(tree.root, options);
   const source = options.pattern[0] ?? "^_\\w*(options?|opts|config|cfg|settings)\\w*$";
   let identifier;
   try {
@@ -412,7 +484,7 @@ function ignored(args) {
       }
     });
   }
-  return { pattern: source, candidates, ...meta(tree) };
+  return { scope, pattern: source, candidates, ...meta(tree) };
 }
 
 // --- verdict -----------------------------------------------------------
@@ -606,7 +678,7 @@ function writeFindings(path, document) {
 }
 
 function report(args) {
-  const options = parseOptions(args, ["out"], []);
+  const options = parseOptions(args, ["out"], ["wire"]);
   const [path] = options._;
   path === undefined && fail("report needs a findings file, or - for stdin");
   let input;
@@ -649,7 +721,54 @@ function report(args) {
     .filter((f) => f.refused)
     .forEach((f) => lines.push(`refused ${f.file}:${f.line} ${f.symbol}: ${f.reason}`));
   skippedFiles.length > 0 && lines.push(`skipped files: ${skippedFiles.length}`);
-  return { text: `${lines.join("\n")}\n`, reported: reported.length };
+
+  const wire = [
+    ...reported.map(toWire),
+    ...live.filter((f) => f.refused && f.worthALook === true).slice(0, MAX_WIRE_REFUSALS).map(toWire),
+  ];
+  return {
+    text: `${lines.join("\n")}\n`,
+    reported: reported.length,
+    wire,
+    wantWire: options.wire === true,
+  };
+}
+
+const LENS_SLUG = "unused-abstraction-scan";
+const MAX_WIRE_REFUSALS = 5;
+
+/**
+ * One finding in the review-lens wire format. Our severities are already
+ * high, medium, and low. A refusal is listed as low and its fix says what to
+ * confirm. `source: script|reviewer` moves into the body and evidence text,
+ * because `source` is the lens slug in this format.
+ */
+function toWire(finding) {
+  const sources = [finding.evidenceSource].flat();
+  const verified = sources.includes("lsp") || (sources.includes("text") && sources.includes("read"));
+  const origin = `finding source: ${finding.source}`;
+  const evidence = `${verified ? "Verified" : "Inferred"}: ${sources.join("+")}; ${origin}; ${finding.evidence}`;
+  return finding.refused
+    ? {
+        source: LENS_SLUG,
+        path: finding.file,
+        line: finding.line,
+        severity: "low",
+        title: `${finding.check}: ${finding.symbol} (kept, worth a look)`,
+        body: `${finding.reason} (${origin}; judgment ${finding.judgment}: ${finding.judgmentReason})`,
+        suggested_fix: `Confirm: ${finding.confirm ?? finding.reason}`,
+        evidence,
+      }
+    : {
+        source: LENS_SLUG,
+        path: finding.file,
+        line: finding.line,
+        severity: finding.severity,
+        title: `${finding.check}: ${finding.symbol}`,
+        body: `${finding.evidence} (${origin}; judgment ${finding.judgment}: ${finding.judgmentReason})`,
+        suggested_fix: finding.proposal,
+        evidence,
+      };
 }
 
 // --- main --------------------------------------------------------------
@@ -660,10 +779,15 @@ function main() {
     process.stdout.write(usage);
     return;
   }
-  const json = { inert, refs, "empty-types": emptyTypes, ignored, verdict };
+  const json = { inert, refs, "empty-types": emptyTypes, ignored, verdict, "diff-scope": diffScope };
   if (command === "report") {
-    const { text, reported } = report(args);
-    process.stdout.write(text);
+    const { text, reported, wire, wantWire } = report(args);
+    if (wantWire) {
+      process.stdout.write(`${JSON.stringify(wire, null, 2)}\n`);
+      process.stderr.write(`headline: ${wire.length > 0 ? "needs-attention" : "approve"}\n`);
+    } else {
+      process.stdout.write(text);
+    }
     process.exitCode = reported > 0 ? 1 : 0;
   } else if (command in json) {
     process.stdout.write(`${JSON.stringify(json[command](args), null, 2)}\n`);
