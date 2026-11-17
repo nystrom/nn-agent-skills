@@ -146,6 +146,9 @@ server when one is available and from text search otherwise, lists candidates
 with a small helper script, and gates each one (seam, public API, named intent,
 multiple call sites, dynamic wiring, own tests, recursion, interface contract)
 before it proposes a change. It reports and proposes; it never edits files.
+It is also a review lens: it reviews a change set (candidates are the
+abstractions the change adds or drops to one use), a whole repository, or named
+paths, and `run-review-lenses` can fan out to it.
 
 ## Install with Claude Code
 

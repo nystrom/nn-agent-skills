@@ -38,11 +38,15 @@ Commands:
   refs <name>                   Word matches of <name> outside comments.
   verdict <symbol> <file>       Consumer verdict for a symbol declared in file.
   forms                         Declaration forms by language.
-  report <findings.json|-> [--out <file>]
+  diff-scope [--base <ref>] [--working-tree]
+                                The files a change set touched, as scope paths.
+  report <findings.json|-> [--out <file>] [--wire]
                                 Validate findings (- reads stdin), print a
                                 ranked summary, and write the result to <file>
                                 when given. <file> must be outside the
-                                repository and not a symlink.
+                                repository and not a symlink. --wire prints
+                                the review-lens wire format as a JSON array
+                                on stdout and the headline on stderr.
 
 Options for candidates and refs:
   --scope <path>   candidates: only declarations under this path (references
@@ -57,6 +61,12 @@ Options for candidates:
   --limit <n>      Print at most n candidates (default 500).
   --clean          Only candidates with no gate hint. Without it, candidates
                    with no hint come first, then the smallest bodies.
+  --diff           Only declarations in the files a change touched, and
+                   declarations whose production use count fell to one. Uses
+                   are still counted in the whole tree. Needs a git repository.
+  --base <ref>     Base of the change (default origin/main, then origin/master,
+                   main, master). Merge base is used. For --diff and diff-scope.
+  --working-tree   Include uncommitted and untracked files in the change.
 Options for verdict:
   --offline              Skip the gh search.
   --assume-unpublished   Treat every package as unpublished.
@@ -325,6 +335,16 @@ function repoRoot() {
   return { cwd, top: top === null ? null : resolve(top.trim()) };
 }
 
+function makeSource(file, lines) {
+  const language = LANGUAGE_OF.get(extOf(file)) ?? null;
+  return {
+    lines,
+    language,
+    test: isTestFile(file),
+    code: lines.map((line) => (isCommentLine(line, language) ? "" : line)),
+  };
+}
+
 /**
  * The tree: repo-relative paths (git's view when available, so ignore files
  * apply), the source files loaded once, and the small docs and config files
@@ -410,13 +430,7 @@ function loadTree(extraExtensions) {
         continue;
       }
       if (isSource) {
-        const language = LANGUAGE_OF.get(ext) ?? null;
-        sources.set(file, {
-          lines,
-          language,
-          test: isTestFile(file),
-          code: lines.map((line) => (isCommentLine(line, language) ? "" : line)),
-        });
+        sources.set(file, makeSource(file, lines));
       } else {
         texts.set(file, { lines, doc: DOC_EXTENSIONS.has(ext) });
       }
@@ -424,7 +438,7 @@ function loadTree(extraExtensions) {
       existsSync(join(root, file)) && isSource && skipped.push(file);
     }
   }
-  return { root, paths, sources, texts, skipped, excludedDirs: [...excludedDirs].sort() };
+  return { root, paths, sources, texts, extensions, skipped, excludedDirs: [...excludedDirs].sort() };
 }
 
 /** What a run could not see, repeated in every command's output. */
@@ -752,6 +766,8 @@ const textLines = (tree, names) => {
 function flagCandidates(tree, byName, hits, options) {
   const ambiguous = [];
   const flagged = [];
+  // Production use count of every name that has one declaration.
+  const counts = new Map();
   for (const [name, group] of byName) {
     if (group.length > 1) {
       group.some((d) => d.inScope) &&
@@ -776,6 +792,7 @@ function flagCandidates(tree, byName, hits, options) {
     const selfReferences = others.filter((hit) => hit.shape === "code" && inBody(hit)).length;
     const outside = others.filter((hit) => !inBody(hit));
     const production = outside.filter((hit) => hit.shape === "code" && !hit.test);
+    counts.set(name, production.length);
     const testUses = outside.filter((hit) => hit.shape === "code" && hit.test);
     const quoted = outside.filter((hit) => hit.shape === "quoted");
     const reexports = outside.filter((hit) => hit.shape === "reexport");
@@ -794,7 +811,7 @@ function flagCandidates(tree, byName, hits, options) {
     });
   }
 
-  return { flagged, ambiguous };
+  return { flagged, ambiguous, counts };
 }
 
 const clip = (text) => text.trim().slice(0, 160);
@@ -875,25 +892,167 @@ const byTriage = (a, b) =>
   a.file.localeCompare(b.file) ||
   a.line - b.line;
 
-function candidates(args) {
-  const options = parseOptions(args, ["scope", "ext", "kind", "decl", "limit"], ["clean"]);
-  const limit = options.limit.length > 0 ? Number(options.limit[0]) : 500;
-  (Number.isInteger(limit) && limit > 0) || fail("--limit needs a positive integer");
-  const tree = loadTree(options.ext);
-  const declarations = findDeclarations(tree, scopeFilter(tree.root, options.scope), options);
+const groupByName = (declarations) => {
   const byName = new Map();
   for (const declaration of declarations) {
     byName.has(declaration.name) || byName.set(declaration.name, []);
     byName.get(declaration.name).push(declaration);
   }
+  return byName;
+};
+
+// --- diff scope ----------------------------------------------------------
+
+/** The base ref: the one named, else the first default branch that exists. */
+function resolveBase(root, named) {
+  const refs = named === undefined ? ["origin/main", "origin/master", "main", "master"] : [named];
+  for (const ref of refs) {
+    if (tryExec("git", ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], root) !== null) {
+      const mergeBase = tryExec("git", ["merge-base", ref, "HEAD"], root)?.trim();
+      mergeBase || fail(`no merge base of ${ref} and HEAD`);
+      return { ref, mergeBase };
+    }
+  }
+  return fail(`no base ref found (tried ${refs.join(", ")}); pass --base`);
+}
+
+/** Files changed since the merge base, with the working tree when asked. */
+function changedFiles(root, mergeBase, workingTree) {
+  const args = ["diff", "--name-status", "-z", "--find-renames", mergeBase, ...(workingTree ? [] : ["HEAD"])];
+  const out = tryExec("git", args, root);
+  out === null && fail("git diff failed");
+  const parts = out.split("\0").filter(Boolean);
+  const files = [];
+  for (let i = 0; i < parts.length; ) {
+    const letter = parts[i++][0];
+    if (letter === "R" || letter === "C") {
+      files.push({ status: letter, oldPath: parts[i++], path: parts[i++] });
+    } else {
+      files.push({ status: letter, oldPath: null, path: parts[i++] });
+    }
+  }
+  if (workingTree) {
+    const untracked = tryExec("git", ["ls-files", "-z", "--others", "--exclude-standard"], root);
+    for (const path of untracked?.split("\0").filter(Boolean) ?? []) {
+      files.push({ status: "A", oldPath: null, path });
+    }
+  }
+  return files;
+}
+
+function diffInfo(options) {
+  const { top } = repoRoot();
+  top === null && fail("a diff scope needs a git repository");
+  const { ref, mergeBase } = resolveBase(top, options.base[0]);
+  const workingTree = options["working-tree"] === true;
+  return { root: top, base: ref, mergeBase, workingTree, files: changedFiles(top, mergeBase, workingTree) };
+}
+
+/** The changed files as scope paths, for `--scope` and for the report. */
+function diffScope(args) {
+  const info = diffInfo(parseOptions(args, ["base"], ["working-tree"]));
+  return {
+    mode: "diff",
+    base: info.base,
+    mergeBase: info.mergeBase,
+    workingTree: info.workingTree,
+    files: info.files,
+    paths: info.files.filter((f) => f.status !== "D").map((f) => f.path),
+  };
+}
+
+/**
+ * The tree as it stood at `ref`: each file in `files`, a change from `ref` to
+ * the tree, is swapped for its version at `ref`. An added file is removed and
+ * a renamed file is read under its old path. A file that cannot be read at
+ * `ref` keeps the version the tree has.
+ */
+function restoreSnapshot(tree, files, ref) {
+  const sources = new Map(tree.sources);
+  const restore = (path) => {
+    const text = tryExec("git", ["show", `${ref}:${path}`], tree.root);
+    text === null || text.includes("\0") || !tree.extensions.has(extOf(path)) ||
+      sources.set(path, makeSource(path, text.split(/\r?\n/)));
+  };
+  for (const { status, path, oldPath } of files) {
+    if (status === "A" || status === "C") {
+      sources.delete(path);
+    } else if (status === "R") {
+      sources.delete(path);
+      restore(oldPath);
+    } else {
+      restore(path);
+    }
+  }
+  return { ...tree, sources };
+}
+
+/**
+ * Production use counts of every single-declaration name at the merge base,
+ * counted over the whole tree.
+ */
+function usesAtBase(tree, info, options) {
+  const baseTree = restoreSnapshot(tree, info.files, info.mergeBase);
+  const byName = groupByName(findDeclarations(baseTree, () => true, { decl: options.decl }));
+  const { hits } = indexTokens(baseTree, new Set(byName.keys()));
+  return flagCandidates(baseTree, byName, hits, { kind: [] }).counts;
+}
+
+/**
+ * Why a declaration is in the diff scope: it is in a changed file, or its
+ * production use count fell to one. Null when the change does not touch it.
+ */
+function diffReason({ declaration, checks }, touched, baseCounts) {
+  const reasons = [];
+  touched.has(declaration.file) && reasons.push("declared-in-changed-file");
+  const before = baseCounts.get(declaration.name) ?? null;
+  before !== null && before > 1 && checks.includes("single-use") && reasons.push("use-count-fell-to-one");
+  return reasons.length === 0 ? null : { reasons, usesAtBase: before };
+}
+
+function candidates(args) {
+  const options = parseOptions(
+    args,
+    ["scope", "ext", "kind", "decl", "limit", "base"],
+    ["clean", "diff", "working-tree"]
+  );
+  const limit = options.limit.length > 0 ? Number(options.limit[0]) : 500;
+  (Number.isInteger(limit) && limit > 0) || fail("--limit needs a positive integer");
+  let tree = loadTree(options.ext);
+  let diff = null;
+  if (options.diff === true) {
+    const info = diffInfo(options);
+    // Without --working-tree the review covers committed content only.
+    info.workingTree || (tree = restoreSnapshot(tree, changedFiles(info.root, "HEAD", true), "HEAD"));
+    diff = { info, touched: new Set(info.files.filter((f) => f.status !== "D").map((f) => f.path)) };
+  }
+  const declarations = findDeclarations(tree, scopeFilter(tree.root, options.scope), options);
+  const byName = groupByName(declarations);
   const { hits, exportedNames } = indexTokens(tree, new Set(byName.keys()));
   const { flagged, ambiguous } = flagCandidates(tree, byName, hits, options);
-  const mentions = textLines(tree, new Set(flagged.map((f) => f.declaration.name)));
-  const described = flagged
-    .map((entry) => describeCandidate(tree, entry, mentions.get(entry.declaration.name) ?? [], exportedNames))
+  diff === null || (diff.baseCounts = usesAtBase(tree, diff.info, options));
+  const selected = flagged
+    .map((entry) => ({ entry, why: diff === null ? null : diffReason(entry, diff.touched, diff.baseCounts) }))
+    .filter(({ why }) => diff === null || why !== null);
+  const mentions = textLines(tree, new Set(selected.map(({ entry }) => entry.declaration.name)));
+  const described = selected
+    .map(({ entry, why }) => ({
+      ...describeCandidate(tree, entry, mentions.get(entry.declaration.name) ?? [], exportedNames),
+      ...(why === null ? {} : { diff: why }),
+    }))
     .filter((c) => options.clean !== true || c.gateHints.length === 0)
     .sort(byTriage);
   return {
+    scope: {
+      mode: diff !== null ? "diff" : options.scope.length > 0 ? "paths" : "repo",
+      ...(diff === null ? {} : {
+        base: diff.info.base,
+        mergeBase: diff.info.mergeBase,
+        workingTree: diff.info.workingTree,
+        changedFiles: diff.info.files.length,
+      }),
+      paths: options.scope,
+    },
     candidates: described.slice(0, limit),
     total: described.length,
     truncated: Math.max(0, described.length - limit),
@@ -1132,6 +1291,7 @@ function validateFinding(finding, index) {
   if (finding.refused === true) {
     need(REFUSAL_IDS.has(finding.reason), `a refused finding needs a reason id from ${[...REFUSAL_IDS].join(", ")}`);
     need(finding.proposal === "none", 'a refused finding has proposal "none"');
+    need(finding.worthALook !== true || isText(finding.confirm), "worthALook needs confirm, what to confirm");
     return problems;
   }
   need(finding.proposal !== "none", "a reported finding needs a concrete proposal");
@@ -1191,8 +1351,51 @@ function writeFindings(path, document) {
   writeFileSync(absolute, `${JSON.stringify(document, null, 2)}\n`);
 }
 
+const WIRE_TITLES = {
+  "single-use": "Inline single-use",
+  "single-impl": "Collapse single-implementation interface",
+  forwarder: "Remove forwarder",
+  reviewer: "Collapse abstraction",
+};
+
+/**
+ * Findings in the review-lens wire format. A reported finding keeps its
+ * severity (this skill has no blocker). A refusal appears only when the
+ * reviewer marked it worth a look, as a low finding that says what to confirm.
+ * `source` is the skill slug, so the finding's own source goes in `evidence`.
+ */
+function toWire(findings) {
+  const wire = [];
+  for (const f of findings.filter((x) => x.judgment !== "dropped")) {
+    const sources = [f.evidenceSource].flat();
+    const origin = `evidence source ${sources.join("+")}; finding source ${f.source}`;
+    const base = { source: TOOL, path: f.file, line: f.line };
+    if (!f.refused) {
+      const gates = (f.gates ?? []).length > 0 ? ` Gates: ${f.gates.join(", ")}.` : "";
+      wire.push({
+        ...base,
+        severity: f.severity,
+        title: `${WIRE_TITLES[f.check]} ${f.symbol}`,
+        body: `${f.evidence} ${f.judgmentReason}.${gates}`,
+        suggested_fix: f.proposal,
+        evidence: `${sources.includes("lsp") ? "Verified" : "Inferred"}: ${origin}. ${f.evidence}`,
+      });
+    } else if (f.worthALook === true) {
+      wire.push({
+        ...base,
+        severity: "low",
+        title: `Confirm before collapsing ${f.symbol} (${f.reason})`,
+        body: `${f.evidence} Refused by gate ${f.reason}: ${f.judgmentReason}.`,
+        suggested_fix: f.confirm,
+        evidence: `Inferred: ${origin}. ${f.evidence}`,
+      });
+    }
+  }
+  return wire;
+}
+
 function report(args) {
-  const options = parseOptions(args, ["out"], []);
+  const options = parseOptions(args, ["out"], ["wire"]);
   const [path] = options._;
   path === undefined && fail("report needs a findings file, or - for stdin");
   let input;
@@ -1241,7 +1444,11 @@ function report(args) {
     .filter((f) => f.refused)
     .forEach((f) => lines.push(`refused (${f.reason}) ${f.file}:${f.line} ${f.symbol}: ${f.judgmentReason}`));
   skippedFiles.length > 0 && lines.push(`skipped files: ${skippedFiles.length}`);
-  return { text: `${lines.join("\n")}\n`, reported: reported.length };
+  return {
+    text: `${lines.join("\n")}\n`,
+    reported: reported.length,
+    wire: options.wire === true ? toWire(findings) : null,
+  };
 }
 
 // --- main ----------------------------------------------------------------
@@ -1252,11 +1459,16 @@ function main() {
     process.stdout.write(usage);
     return;
   }
-  const json = { candidates, refs, verdict, forms };
+  const json = { candidates, refs, verdict, forms, "diff-scope": diffScope };
   if (command === "report") {
-    const { text, reported } = report(args);
-    process.stdout.write(text);
-    process.exitCode = reported > 0 ? 1 : 0;
+    const { text, reported, wire } = report(args);
+    if (wire === null) {
+      process.stdout.write(text);
+    } else {
+      process.stdout.write(`${JSON.stringify(wire, null, 2)}\n`);
+      process.stderr.write(`${wire.length > 0 ? "needs-attention" : "approve"}\n`);
+    }
+    process.exitCode = (wire === null ? reported : wire.length) > 0 ? 1 : 0;
   } else if (command in json) {
     process.stdout.write(`${JSON.stringify(json[command](args), null, 2)}\n`);
   } else {

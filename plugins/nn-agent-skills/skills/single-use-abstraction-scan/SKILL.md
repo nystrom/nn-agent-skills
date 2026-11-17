@@ -11,10 +11,11 @@ description: >-
   count production and test references. Every candidate passes a judgment gate
   (seam, public API, named intent, multiple call sites, dynamic wiring, own
   tests, recursion, interface contract) and becomes a finding with a concrete
-  proposed change or a refusal with a reason. The skill reports and proposes;
-  it never edits files. Use when asked to find single-use abstractions, needless
-  indirection, one-caller wrappers, one-implementation interfaces, or code that
-  can be inlined to make it simpler.
+  proposed change or a refusal with a reason. It reviews a change set or a
+  whole repository, reports and proposes, and never edits files. Use when asked
+  to find single-use abstractions, needless indirection, one-caller wrappers,
+  one-implementation interfaces, or code that can be inlined to make it
+  simpler, or as a review lens under run-review-lenses.
 ---
 
 # Single-Use Abstraction Scan
@@ -28,6 +29,92 @@ the abstraction.
 For fields, parameters, and options that nothing reads, use the
 `unused-abstraction-scan` skill. It refuses one-caller wrappers on purpose;
 this skill is the dedicated check for them.
+
+## Review lens
+
+This skill is a review lens. Before you start, read
+`../run-review-lenses/references/lens-protocol.md` and
+`../run-review-lenses/references/review-scope.md`, and follow them. Two modes:
+
+- **Standalone** (the user invoked this skill): resolve the scope, run the
+  method below, and return the compact markdown report that the protocol
+  describes: a one-line verdict (`needs-attention` or `approve`), the mode and
+  scope in one line, then the findings summary from "Report".
+- **Fan-out** (the prompt says "structured findings" or names the wire format):
+  use the scope the orchestrator passed and never re-derive it. Return only the
+  structured list in the wire format below and a one-line headline,
+  `needs-attention` or `approve`. Do not ask the user questions in this mode;
+  if the roots are unclear, say so in one `low` finding.
+
+In both modes the skill returns findings and does not act: no edits, no
+commits, no GitHub posts.
+
+### Scope mapping
+
+The scope limits which abstractions are candidates. It never limits the
+evidence search: reference counts, implementers, test uses, and roots are
+computed over the whole tree.
+
+| Mode | Candidates |
+| ---- | ---------- |
+| `diff` (default) | Abstractions the change adds, abstractions declared in changed files, and abstractions whose production use count the change drops to one (count at the merge base against count at head). |
+| `repo` | Every declaration in the tree. Work through it by area, and say what you skipped. |
+| `paths` | Declarations under the named paths. |
+
+Commands, run from the repository root:
+
+```bash
+node <skill-dir>/scripts/scan.mjs diff-scope [--base REF] [--working-tree]
+node <skill-dir>/scripts/scan.mjs candidates --diff [--base REF] [--working-tree]
+node <skill-dir>/scripts/scan.mjs candidates --scope PATH ...    # paths mode
+node <skill-dir>/scripts/scan.mjs candidates                     # repo mode
+```
+
+`diff-scope` lists the changed files and their paths. `candidates --diff`
+applies the diff rule above and gives each candidate a `diff` field: the reason
+(`declared-in-changed-file`, `use-count-fell-to-one`) and `usesAtBase`. The
+base is the one the orchestrator passed, else `origin/main`. Pass
+`--working-tree` when the scope includes uncommitted files.
+
+Without `--working-tree`, the scan reads the committed content of `HEAD`, so
+uncommitted edits do not change the counts.
+
+With a language server in diff mode, collect two sets of symbols: the
+declarations in changed files, and the symbols that removed or changed lines
+reference, including lines in deleted files. Run find-references on each and
+compare the count at the merge base with the count at head. The second set
+finds an unchanged declaration that lost a caller.
+
+### Wire format
+
+Map each reported finding to
+`{ source, path, line, severity, title, body, suggested_fix, evidence }`.
+`scan.mjs report - --wire` prints this array (see "Report").
+
+| Wire field | From |
+| ---------- | ---- |
+| `source` | `single-use-abstraction-scan` (this skill's slug). The finding's own `source`, `script` or `reviewer`, goes in `evidence`. |
+| `path`, `line` | `file`, `line` |
+| `severity` | `high`, `medium`, `low` unchanged. This skill has no `blocker`. |
+| `title` | The check and the symbol: "Inline single-use X", "Collapse single-implementation interface X", "Remove forwarder X", "Collapse abstraction X". |
+| `body` | `evidence`, `judgmentReason`, and the gates. |
+| `suggested_fix` | `proposal` |
+| `evidence` | `Verified: ...` when `lsp` backs the finding, else `Inferred: ...`, naming the evidence sources (`lsp`, `text`, `read`) and the finding source. |
+
+Refusals are not findings in fan-out. A refusal that deserves a look (for
+example `public-api` on a symbol that may have no outside consumer) is reported
+as a `low` finding with `worthALook: true` and `confirm`, the text of what to
+confirm; it becomes `suggested_fix`. Other refusals and dropped candidates do
+not appear.
+
+### Overlap with other lenses
+
+`ai-slop-code-review` also flags needless wrappers, by reading the diff for
+generated residue. `dead-code-code-review` flags symbols with no callers. This
+skill adds use counts over the whole tree from a script or a language server,
+and a refusal gate for seams, public API, dynamic wiring, and tests. A finding
+here names the symbol, so the orchestrator can merge it with a wrapper finding
+on the same symbol and keep the one with the gate verdict.
 
 ## Contract
 
@@ -121,14 +208,15 @@ Run from inside the target repository. Node 20 or later, no packages. The
 script is text-based and works on any language. It prints JSON.
 
 ```bash
-node <skill-dir>/scripts/scan.mjs candidates            # one use, or one implementer
+node <skill-dir>/scripts/scan.mjs candidates            # one use, or one implementer (add --diff for a change set)
 node <skill-dir>/scripts/scan.mjs candidates --clean    # only candidates with no gate hint
 node <skill-dir>/scripts/scan.mjs refs NAME             # text matches, production vs test
 node <skill-dir>/scripts/scan.mjs verdict SYMBOL FILE   # does it leave its package
 node <skill-dir>/scripts/scan.mjs forms                 # declaration forms it knows
 ```
 
-Options: `--scope <path>` limits which declarations are listed (references are
+Options: `--diff`, `--base`, and `--working-tree` select a change set (see
+"Scope mapping"); `--scope <path>` limits which declarations are listed (references are
 counted in the whole tree), `--kind <kind>` filters, `--ext .x` adds a source
 extension, `--decl <regex>` adds a declaration form for a language the table
 lacks (named group `(?<name>...)`), `--limit <n>` limits the output.
@@ -209,14 +297,20 @@ Compose the findings as JSON and pipe them to `report`, which validates and
 summarizes them. Do not create the input file inside the repository.
 
 ```bash
-node <skill-dir>/scripts/scan.mjs report - --out /tmp/single-use.json <<'EOF'
+node <skill-dir>/scripts/scan.mjs report - [--wire] <<'EOF'
 {"skippedFiles": [], "excludedDirs": [], "findings": [ ... ]}
 EOF
 ```
 
+Add `--out <path>` only when the user asks for a findings file. A lens run
+returns its findings in the reply and writes no file.
+
 `report` checks the shape, counts, ranks, and writes the named file. It refuses
 to replace a file that is not an earlier findings file. It exits 1 when at least
-one finding is reported, 0 when none, 2 on invalid input.
+one finding is reported, 0 when none, 2 on invalid input. With `--wire` it
+prints the wire-format JSON array on stdout and the headline (`needs-attention`
+or `approve`) on stderr, and exits 1 when the array is not empty; the `--out`
+file is still the findings document.
 
 Each finding has `id`, `source` (`script` for a candidate that the script
 listed and you confirmed, `reviewer` for one you found), `check`, `severity`,
@@ -230,6 +324,7 @@ listed and you confirmed, `reviewer` for one you found), `check`, `severity`,
 | `gates` | The finding is reported with gates. Judgment is `downgraded` and severity is `low`. |
 | `testsNamed` | `gates` has `has-own-tests`. The tests that call the symbol. |
 | `raiseReason` | Severity is above `low`. |
+| `worthALook`, `confirm` | A refusal that goes into the wire output as a `low` finding, and the text of what to confirm. |
 
 The summary to the user has:
 

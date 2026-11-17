@@ -14,6 +14,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -780,4 +781,183 @@ test("unknown commands and options exit 2", () => {
   assert.equal(scan(dir, ["nope"]).status, 2);
   assert.equal(scan(dir, ["candidates", "--bogus"]).status, 2);
   assert.equal(scan(dir, []).status, 0);
+});
+
+// --- review-lens modes ---------------------------------------------------
+
+function gitRun(dir, ...args) {
+  const run = spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args], {
+    cwd: dir,
+    encoding: "utf8",
+  });
+  assert.equal(run.status, 0, run.stderr);
+}
+
+function changeSetRepo() {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "single-use-diff-")));
+  const put = (path, text) => {
+    mkdirSync(dirname(join(dir, path)), { recursive: true });
+    writeFileSync(join(dir, path), text);
+  };
+  put("u.ts", [
+    "export function droppedToOne() { return 1; }",
+    "export function untouchedOnce() { return 2; }",
+    "export function delUse() { return 3; }",
+    "",
+  ].join("\n"));
+  put("x.ts", "function inTouched() { return 4; }\ndroppedToOne();\ninTouched();\nuntouchedOnce();\ndelUse();\n");
+  put("y.ts", "droppedToOne();\n");
+  put("d.ts", "delUse();\n");
+  gitRun(dir, "init", "-q", "-b", "main");
+  gitRun(dir, "add", "-A");
+  gitRun(dir, "commit", "-q", "-m", "base");
+  gitRun(dir, "checkout", "-q", "-b", "feature");
+  put("y.ts", "// no use left\n");
+  put("x.ts", "function inTouched() { return 4; }\n// edited\ndroppedToOne();\ninTouched();\nuntouchedOnce();\ndelUse();\n");
+  put("n.ts", "function addedHelper() { return 5; }\naddedHelper();\n");
+  rmSync(join(dir, "d.ts"));
+  gitRun(dir, "add", "-A");
+  gitRun(dir, "commit", "-q", "-m", "change");
+  return { dir, put };
+}
+
+test("candidates --diff selects added, changed-file, and use-count-fell-to-one declarations", () => {
+  const { dir } = changeSetRepo();
+  const all = byName(scan(dir, ["candidates"]).json);
+  assert.ok(all.untouchedOnce);
+  const { json, status } = scan(dir, ["candidates", "--diff"]);
+  assert.equal(status, 0);
+  const found = byName(json);
+  assert.deepEqual(Object.keys(found).sort(), ["addedHelper", "delUse", "droppedToOne", "inTouched"]);
+  assert.deepEqual(found.addedHelper.diff.reasons, ["declared-in-changed-file"]);
+  assert.deepEqual(found.inTouched.diff.reasons, ["declared-in-changed-file"]);
+  assert.deepEqual(found.droppedToOne.diff, { reasons: ["use-count-fell-to-one"], usesAtBase: 2 });
+  assert.deepEqual(found.delUse.diff, { reasons: ["use-count-fell-to-one"], usesAtBase: 2 });
+  assert.equal(json.scope.mode, "diff");
+  assert.equal(json.scope.base, "main");
+  assert.equal(json.scope.changedFiles, 4);
+});
+
+test("--diff counts uses in the whole tree, not only in the diff", () => {
+  const { dir } = changeSetRepo();
+  const found = byName(scan(dir, ["candidates", "--diff"]).json);
+  assert.equal(found.droppedToOne.uses.production, 1);
+  assert.equal(found.droppedToOne.site.file, "x.ts");
+  assert.equal(found.inTouched.uses.production, 1);
+});
+
+test("--diff takes --base and --scope, and fails without a base", () => {
+  const { dir } = changeSetRepo();
+  const scoped = scan(dir, ["candidates", "--diff", "--base", "main", "--scope", "n.ts"]).json;
+  assert.deepEqual(scoped.candidates.map((c) => c.name), ["addedHelper"]);
+  const none = scan(dir, ["candidates", "--diff", "--base", "nope"]);
+  assert.equal(none.status, 2);
+  assert.match(none.stderr, /no base ref/);
+  assert.equal(scan(makeRepo(), ["candidates", "--diff"]).status, 2);
+});
+
+test("--working-tree adds uncommitted and untracked files to the change", () => {
+  const { dir, put } = changeSetRepo();
+  put("w.ts", "function wipHelper() { return 6; }\nwipHelper();\n");
+  assert.equal(byName(scan(dir, ["candidates", "--diff"]).json).wipHelper, undefined);
+  assert.ok(byName(scan(dir, ["candidates", "--diff", "--working-tree"]).json).wipHelper);
+});
+
+test("without --working-tree the scan reads committed content", () => {
+  const { dir, put } = changeSetRepo();
+  put("x.ts", "function inTouched() { return 4; }\ninTouched();\nuntouchedOnce();\ndelUse();\n");
+  put("z.ts", "export function extraUse() {}\n");
+  put("z2.ts", "extraUse();\n");
+  const committed = byName(scan(dir, ["candidates", "--diff"]).json);
+  assert.equal(committed.droppedToOne.uses.production, 1);
+  assert.equal(committed.extraUse, undefined);
+  const live = byName(scan(dir, ["candidates", "--diff", "--working-tree"]).json);
+  assert.equal(live.droppedToOne, undefined);
+  assert.ok(live.extraUse);
+});
+
+test("an interface with several uses and one implementer is not a use-count drop", () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "single-use-iface-")));
+  writeFileSync(join(dir, "i.ts"), "export interface Port { n: number }\nclass A implements Port { n = 1 }\nlet a: Port;\nlet b: Port;\n");
+  writeFileSync(join(dir, "j.ts"), "const k = 1;\n");
+  gitRun(dir, "init", "-q", "-b", "main");
+  gitRun(dir, "add", "-A");
+  gitRun(dir, "commit", "-q", "-m", "base");
+  gitRun(dir, "checkout", "-q", "-b", "feature");
+  writeFileSync(join(dir, "j.ts"), "const k = 2;\n");
+  gitRun(dir, "commit", "-q", "-am", "change");
+  assert.ok(byName(scan(dir, ["candidates"]).json).Port.checks.includes("single-impl"));
+  assert.equal(byName(scan(dir, ["candidates", "--diff"]).json).Port, undefined);
+});
+
+test("diff-scope lists the changed files and the scope paths", () => {
+  const { dir } = changeSetRepo();
+  const { json, status } = scan(dir, ["diff-scope"]);
+  assert.equal(status, 0);
+  assert.deepEqual(json.paths.sort(), ["n.ts", "x.ts", "y.ts"]);
+  assert.deepEqual(json.files.map((f) => f.status).sort(), ["A", "D", "M", "M"]);
+  assert.equal(json.mergeBase.length, 40);
+  assert.equal(scan(makeRepo(), ["diff-scope"]).status, 2);
+});
+
+test("a renamed file counts its base version for the base use count", () => {
+  const { dir } = changeSetRepo();
+  gitRun(dir, "mv", "x.ts", "x2.ts");
+  gitRun(dir, "commit", "-q", "-am", "rename");
+  const found = byName(scan(dir, ["candidates", "--diff"]).json);
+  assert.ok(found.inTouched);
+  assert.equal(found.droppedToOne.diff.usesAtBase, 2);
+});
+
+const wireInput = [
+  good(),
+  good({ id: "r1", symbol: "seamy", refused: true, reason: "public-api", proposal: "none", consumerVerdict: "unknown", worthALook: true, confirm: "Ask whether outside packages import seamy." }),
+  good({ id: "r2", symbol: "quiet", refused: true, reason: "seam", proposal: "none" }),
+  good({ id: "d1", symbol: "gone", judgment: "dropped" }),
+  good({ id: "l1", symbol: "viaLsp", evidenceSource: ["lsp", "read"], severity: "medium", raiseReason: "adds a layer with no seam", source: "reviewer" }),
+];
+
+test("report --wire prints the lens wire format and the headline", () => {
+  const dir = makeRepo();
+  const out = join(outside(), "w.json");
+  const { status, json, stderr } = scan(dir, ["report", "-", "--wire", "--out", out], JSON.stringify({ findings: wireInput }));
+  assert.equal(status, 1);
+  assert.equal(stderr.trim(), "needs-attention");
+  assert.equal(json.length, 3);
+  for (const entry of json) {
+    assert.deepEqual(Object.keys(entry).sort(), ["body", "evidence", "line", "path", "severity", "source", "suggested_fix", "title"]);
+    assert.equal(entry.source, "single-use-abstraction-scan");
+  }
+  const [reported, confirm, lsp] = json;
+  assert.equal(reported.severity, "low");
+  assert.equal(reported.suggested_fix, wireInput[0].proposal);
+  assert.match(reported.evidence, /^Inferred: .*text\+read.*finding source script/);
+  assert.equal(confirm.severity, "low");
+  assert.match(confirm.title, /Confirm before collapsing seamy \(public-api\)/);
+  assert.equal(confirm.suggested_fix, "Ask whether outside packages import seamy.");
+  assert.equal(lsp.severity, "medium");
+  assert.match(lsp.evidence, /^Verified: .*lsp\+read.*finding source reviewer/);
+  assert.equal(JSON.parse(readFileSync(out, "utf8")).tool, "single-use-abstraction-scan");
+});
+
+test("report --wire gives an empty list and approve when nothing is reported", () => {
+  const { status, json, stderr } = scan(makeRepo(), ["report", "-", "--wire"], JSON.stringify([
+    good({ refused: true, reason: "seam", proposal: "none" }),
+  ]));
+  assert.equal(status, 0);
+  assert.deepEqual(json, []);
+  assert.equal(stderr.trim(), "approve");
+});
+
+test("report --wire exits 1 when only a worth-a-look refusal is returned", () => {
+  const only = good({ refused: true, reason: "public-api", proposal: "none", consumerVerdict: "unknown", worthALook: true, confirm: "Ask about outside users." });
+  const { status, json, stderr } = scan(makeRepo(), ["report", "-", "--wire"], JSON.stringify([only]));
+  assert.equal(status, 1);
+  assert.equal(json.length, 1);
+  assert.equal(stderr.trim(), "needs-attention");
+});
+
+test("worthALook needs a confirm text", () => {
+  const bad = good({ refused: true, reason: "seam", proposal: "none", worthALook: true });
+  assert.equal(report(makeRepo(), [bad]).status, 2);
 });

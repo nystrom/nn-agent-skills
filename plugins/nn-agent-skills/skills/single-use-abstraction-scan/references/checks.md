@@ -57,6 +57,31 @@ Bounds of the text search:
   that holds unbalanced braces can shorten or lengthen the body. The body size
   is a hint.
 
+## Diff scope
+
+`candidates --diff` keeps a candidate when its file is in the change, or when its
+production use count at the merge base was above one and is one at head.
+
+- Only a `single-use` candidate can fall to one. An interface with several uses
+  and one implementer is selected only when its file changed.
+- Without `--working-tree`, files that differ between the working tree and
+  `HEAD` are read from `HEAD`, so the review covers committed content.
+- The base count comes from the same text counting, with each changed file
+  replaced by its merge-base version (a deleted file restored, an added file
+  removed, a renamed file read under its old path). It has the bounds of the
+  text search above.
+- A file the script cannot read at the merge base (over 2 MB, not text) keeps its
+  head version, so a use that moved out of it is not seen.
+- A name declared more than once at the merge base has no base count and is not
+  selected for a drop. It is still selected when its file changed.
+- The rule selects declarations in changed files whole, not only the added
+  lines. The model decides whether an old abstraction in a changed file belongs
+  in the review.
+- A symbol whose use count fell by a rename of the symbol itself shows as
+  added, because the old name no longer exists at head.
+- `diff-scope` and `candidates --diff` need a git repository and a base ref.
+  Without one they exit 2; the model then reviews in `repo` or `paths` mode.
+
 ## `single-use`
 
 A function, method, class, type alias, or interface with exactly one production
