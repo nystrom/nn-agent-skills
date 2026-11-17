@@ -137,6 +137,16 @@ are characterization tests, written to a separate `*.generated` test file; an
 optional review pass on a stronger model judges whether each pinned behavior is
 correct.
 
+### single-use-abstraction-scan
+
+Finds abstractions that exactly one place uses and that can be inlined: a
+function, method, class, interface, type alias, wrapper, or an interface with one
+implementation. Works in any language. It takes references from a language
+server when one is available and from text search otherwise, lists candidates
+with a small helper script, and gates each one (seam, public API, named intent,
+multiple call sites, dynamic wiring, own tests, recursion, interface contract)
+before it proposes a change. It reports and proposes; it never edits files.
+
 ## Install with Claude Code
 
 Add this marketplace, then install the plugin:
@@ -171,7 +181,8 @@ Invoke the skills as `$run-review-lenses`, `$adversarial-review`,
 `$dead-code-code-review`, `$ai-slop-code-review`, `$numerical-code-review`,
 `$codex-code-review` (which skips itself inside Codex),
 `$interactive-code-review`,
-`$ui-code-review`, `$concolic-test-generation`, or describe a matching task
+`$ui-code-review`, `$concolic-test-generation`,
+`$single-use-abstraction-scan`, or describe a matching task
 and let Codex select the skill.
 
 ## Install with Antigravity
