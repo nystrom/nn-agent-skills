@@ -139,13 +139,14 @@ correct.
 
 ### unhandled-case-scan
 
-Finds the TypeScript sites where a case can go unhandled without a compile
-error: a `switch` over a finite union with no `default`, whose missing case would
-widen the function's inferred return type, and an empty `catch`. It reads types
-with the repository's own `typescript` package, refuses every site the compiler
-already guards, and detects the repository's exhaustiveness helper (a function
-that takes `never`) or proposes `const _exhaustive: never = value`. It reports a
-JSON file and a ranked summary, and edits only when asked.
+Finds the places, in any language, where a case can go unhandled without a
+build error: a dispatch over a finite set (enum, sum type, union, sealed
+hierarchy) that does not fail when a case is added, and a failure handler that
+neither acts nor says why (`catch {}`, `except: pass`, a discarded error). A
+table-driven script lists candidates. The model then checks each one with the
+language server or a scratch compile, reads code the patterns cannot see, and
+labels the evidence source of each finding. The output is findings, each with a
+proposed change and the check that verifies it. The skill never edits files.
 
 ## Install with Claude Code
 

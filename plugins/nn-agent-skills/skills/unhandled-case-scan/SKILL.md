@@ -1,166 +1,201 @@
 ---
 name: unhandled-case-scan
 description: >-
-  Find the places in a TypeScript repository where a case can go unhandled and
-  neither lint nor the compiler says so: a `switch` over a finite union of
-  literals or enum members that has no `default`, whose missing case would
-  widen the function's inferred return type instead of failing the build, and
-  an empty `catch` that does not say why the error is ignored. Reads types
-  with the repository's own `typescript` package and refuses every site the
-  compiler already guards. Reports findings and proposes edits; edits only
-  when asked. Use when asked about exhaustive switches, unhandled union cases,
-  adding an exhaustiveness check, `assertNever`-style helpers, swallowed
-  errors, or empty catch blocks.
+  Find places in any programming language where a case can go unhandled: a
+  dispatch over a finite set of cases (enum, sum type, union, sealed
+  hierarchy, tagged variants) that does not fail the build when a case is
+  added, and a failure handler that neither acts nor states why it does not
+  (empty catch, `except: pass`, discarded error, `rescue nil`). Uses the
+  language server for types and diagnostics when one is available, falls back
+  to text search and reading, and reads the code itself to confirm or overturn
+  every candidate and to survey what pattern matching cannot see. Reports
+  findings, each with a concrete proposed change and the check that verifies
+  it; it never edits files. Use when asked about exhaustive switches or
+  matches, unhandled enum or union cases, `assert_never` or `assertNever`
+  helpers, swallowed errors, or empty catch blocks.
 ---
 
 # Unhandled Case Scan
 
-The rule: a `switch` over a finite union handles every case or fails the
-build, and an empty `catch` states why. This skill finds the sites that break
-the rule and that the compiler does not already report.
+The rule has two parts:
 
-Most sites that look like gaps are not. TypeScript reports a new union member
-in several ways, and a partial dispatch over a large union is often the
-design. The scan asks the type checker before it reports. Read
-`references/checks.md` for the bound of each check and for the checks that are
-not made.
+- A dispatch over a finite set of cases handles every case, or fails the build
+  when a case is added to the set.
+- A failure handler acts on the failure, or states why it does not.
+
+This skill finds the sites that break the rule and that the compiler does not
+already report. It works for any language. The output is findings. Each
+finding has a proposed change and a check that verifies it. The skill never
+edits files, commits, or opens or comments on pull requests or issues. The
+user, or a separate task, applies the changes.
+
+Most sites that look like gaps are not. Many compilers report a new case in
+some forms of dispatch and not in others, and a partial dispatch over a large
+set is often the design. Ask the compiler before you report.
+
+## Evidence sources
+
+Label each finding with the source of its evidence:
+
+- `lsp`: a language server answered. Use hover or type info for the type of
+  the switched-on value and whether it is a finite set, diagnostics for what
+  the compiler already reports, definitions and references for declared return
+  types and callers.
+- `text`: `rg` or `git grep` found it.
+- `read`: you read the code.
+
+Prefer `lsp` over `text`. Check whether a language server is configured for
+the language (an LSP tool in the session, an editor config, or a server binary
+on the path) or startable. When none is, fall back to `rg` or `git grep` plus
+reading the code, and say so in the summary.
+
+Test whether the compiler already flags a missing case; do not assume it. Add
+a case to the set in a scratch copy of the file (a copy in the system temp
+directory, or a scratch worktree), then read the diagnostics or compile the
+copy. Never make this edit in the repository under review.
 
 ## Inputs
 
 - **Scope**: the whole repository (default), or one or more subtrees.
-- **Mode**: `report` (default) prints findings and a ranked summary. `fix`
-  applies the proposals. Use `fix` only when the user asks for edits.
+- **Languages**: those the repository uses. `references/languages.md` lists
+  what the table covers and what is guidance only.
 
 ## Signal
 
-`scripts/scan.mjs` is Node ESM and runs on Node 20 or later. It resolves
-`typescript` from the target repository's working directory and exits 2 with a
-message when the package is absent. Run it from inside the target repository.
+`scripts/candidates.mjs` is Node ESM, runs on Node 20 or later, and needs no
+packages. It matches patterns from a per-language table
+(`scripts/languages.mjs`) and verifies nothing. Every result is a candidate.
+It reads the repository and writes only the findings file. Run it from inside
+the repository.
 
 ```bash
-node <skill-dir>/scripts/scan.mjs --out /tmp/unhandled-case-scan.json
-node <skill-dir>/scripts/scan.mjs --scope src/lib --out findings.json
+node <skill-dir>/scripts/candidates.mjs --scope src/lib --out /tmp/findings.json
 ```
 
 | Option | Meaning |
 | ------ | ------- |
-| `--scope <path>` | Restrict to a subtree. Repeatable. Resolved against the working directory. A scope outside the repository, or one that matches no scanned file, exits 2. |
-| `--project <tsconfig>` | Scan this config instead of discovering them. Repeatable. |
-| `--out <file>` | Write the findings document here. Without it the document goes to stdout. The ranked summary always goes to stderr. |
+| `--scope <path>` | Restrict to a subtree. Repeatable. A scope outside the repository, or one that matches no scanned file, exits 2. |
+| `--language <name>` | Restrict to one table entry. Repeatable. |
+| `--out <file>` | Findings file. Its directory must exist, and its real path must be outside the repository. Default: a new file under the system temp directory; the path is printed to stderr. |
 
-Exit codes: 0 when nothing is reported, 1 when findings are reported, 2 when
-the scan could not run. A refused candidate does not change the exit code.
+Exit codes: 0 when there are no candidates, 1 when candidates are reported, 2
+when the scan could not run. The script does not run if no file has a table
+entry; use the survey below.
 
-The scan finds every `tsconfig.json` under the repository root. It does not
-enter `node_modules`, build output, hidden directories, or symlinked
-directories. Pass `--project` for a config it cannot reach. It builds one program per
-config and analyzes each file under the deepest config that lists it. Each
-config is read as the repository's compiler would read it, so `extends`,
-`paths`, and `strict` apply. The run needs no build output. A config with
-errors, such as an unreadable file or an `extends` that does not resolve, is
-listed under `skipped`, and the scan reports nothing about its files. A root
-file over 1 MiB is skipped the same way.
+| Check | Candidate |
+| ----- | --------- |
+| `dispatch-no-default` | A `switch` or `match` with no catch-all arm, in a language where a missing catch-all is how a new case goes unreported. |
+| `dispatch-wildcard` | A `match`, `when`, or `switch` with a catch-all arm, in a language where the compiler checks exhaustiveness and the catch-all hides a new case. |
+| `empty-handler` | A handler with no statements, or one that discards the failure. |
 
-| Check | Fires on |
-| ----- | -------- |
-| `no-default` | A `switch` with no `default` whose unhandled case would widen the enclosing function's inferred return type. |
-| `empty-catch` | A `catch` block, or a `.catch(() => {})` handler, with no statements. |
-
-Production code only: `.ts`, `.tsx`, `.mts`, `.cts`. Declaration files,
-`*.test.*`, `*.spec.*`, and paths with a `test`, `tests`, `__tests__`, or
-`__mocks__` segment are not scanned.
+Files in a language with no table entry are counted under
+`extensions_without_entry`. Test paths are not scanned and are counted in
+`excluded_test_files`. Files over 1 MiB, binary files, and symbolic links are
+not scanned and are listed in `skipped`.
 
 ## Findings document
 
-A JSON object with `counts`, `skipped`, `exhaustiveness_helpers`, and
-`findings`. Reported findings come first, ranked by severity, then refused
-ones. Each finding has `id`, `check`, `file`, `line`, `severity`, `signal`,
-`evidence`, `refused`, and `proposal`. A refused finding also has a `reason`,
-and its `proposal` is "none". A function name appears as `symbol` when the
-function has a plain name.
+A JSON object with `counts`, `languages_scanned`, `extensions_without_entry`,
+`closing_markers`, `skipped`, `excluded_test_files`, and `findings`. Candidates come first, ranked by
+severity, then commented handlers. Each finding has `id`, `check`, `file`,
+`line`, `language`, `severity`, `signal`, `evidence`, `refused`, `source`,
+`proposal`, and, unless refused, `verify`. The script writes `source: script`
+and `evidence: text`. A refused finding also has a `reason`, and its
+`proposal` begins with "none".
 
-After the run, show the user the summary: counts, the helper found, and the
-reported findings in rank order. Do not paste refused findings; give their
-count and offer the file.
+`closing_markers` lists the constructs the repository already uses to close a
+dispatch, counted per language, such as `assert_never(` or `@unknown default`.
+A proposal names the most-used marker for its language. The scan finds markers
+by pattern. Confirm that a marker takes the value as its argument and fails at
+build time before you propose it.
 
-## Exhaustiveness helper
+## Judgment pass
 
-The scan looks for the repository's helper by signature: a function whose
-first parameter has type `never`, called in a `default` clause. It does not
-match on a name. The most-used helper becomes the proposal. When no `default`
-clause calls one, the proposal is a `const _exhaustive: never = <narrowed value>`
-in a new `default`. The narrowed value is the switched-on expression, or its
-object when the union is discriminated by that property: for
-`switch (shape.kind)` pass `shape`, because `shape.kind` is not valid when
-`shape` has narrowed to `never`. Check that the helper is imported in the file
-before applying the edit, and that it throws, so the `default` also fails at
-run time.
+The script is the first pass. A script verdict alone never justifies a
+proposed change. Do these steps yourself, and do them when the script reports
+nothing.
 
-## Evidence
+1. **Confirm or overturn each candidate.** Read the code around every
+   candidate and every refusal, and its callers. Establish with `lsp`, a
+   scratch compile, or reading: the type of the switched-on value, that it is
+   a finite set, that the compiler does not already report a missing case, the
+   declared return type, and who uses the result. Mark each candidate
+   `confirmed`, `downgraded`, or `dropped`, with the reason. A refusal can be
+   wrong too. Overturn it when the code shows that.
+2. **Survey what the script cannot see.** Read the code listed under "What
+   the script cannot see". Start with the neighborhood of each finding and
+   the `skipped` files. When the script reports nothing, run the searches
+   below over the requested scope. Report each defect as a reviewer finding.
+3. **Label the source.** Script findings carry `source: script`. Mark yours
+   `source: reviewer` in the summary. Reviewer findings are not written to the
+   JSON.
 
-A finite union is the checker's answer, not a list of property names. A
-`kind` typed `"a" | "b"` is a union of literals, and a missing case is a gap.
-A name read from input is `string`, and a fallback there is the design.
+Searches for a clean run, adapted to the languages in use: `rg -n
+'\b(switch|match|when)\b'` for dispatches, `rg -n 'catch|except|rescue|\b_ =
+|unwrap_or_default'` for handlers, `rg -n 'else if|elif|elseif'` for chains
+over a finite set. Read each hit that dispatches on a tag, kind, type, or
+enum value.
 
-A `no-default` finding must also survive every way TypeScript already reports
-a new case. Two adjacent functions can switch on the same field of the same
-union, and only the one with a declared return type gets error TS2366 when
-the union grows. So the scan reports a switch only when it is the last
-statement of its function, every clause exits, and nothing constrains the
-function's return type: no annotation, and no contextual type from a call it
-is a callback to.
+Summary format: counts, the closing marker found, then one ranked list. Each
+line has the source, severity, `file:line`, the evidence source (`lsp`,
+`text`, or `read`), the verdict for script findings, the defect in one
+sentence, the proposed change, and the verifying check. List a refusal the
+pass overturned as a finding. Give the count of refusals left standing and
+offer the file.
 
-Severity is `medium`, not `high`. Widening the inferred return type still
-produces errors where callers use the result, so the diagnostic is misplaced
-and not absent. The proposal moves it to the definition. An unexplained empty
-`catch` is `high`.
+## What the script cannot see
 
-## Transform
+| Check | Not seen | Where to look |
+| ----- | -------- | ------------- |
+| Dispatch | `if`/`else if`/`elif`/`elseif` chains over a finite set that end in an unchecked `else`, or in no `else`. | Chains on a `kind`, `type`, or enum field whose last branch assumes the remaining case. |
+| Dispatch | Dispatch the type system cannot model: string-keyed lookup tables, map or dictionary indexing with a cast, enum-like constants typed as strings, dispatch on a runtime class name. | Tables keyed by a tag, and switches over a value typed as a string. |
+| Dispatch | Whether the switched-on value is a finite set, and whether the compiler already reports a missing case. | Language server type info and diagnostics, or a scratch compile. |
+| Dispatch | A nested dispatch: a catch-all arm in an inner dispatch hides a missing one in the outer. | Each dispatch read on its own. |
+| Handler | Handlers that swallow a failure without an empty block: a handler that only logs and continues, a named no-op handler, a handler that returns a default value, a promise or future whose result is never awaited or checked. | Every handler and every ignored result near a finding. |
+| Both | Languages with no table entry, test-like paths, large and binary files, symbolic links, and generated code. | Each `extensions_without_entry` and `skipped` entry, and the test files counted in `excluded_test_files` (find them with `git ls-files`). |
 
-One edit per site:
+## Proposed changes
 
-- `no-default`: add the `default` the proposal names, then run the type
-  checker. It names the case that is now unhandled. Handle the case, or tell
-  the user the switch was a partial dispatch.
-- `empty-catch`: handle or report the error, or write the reason the failure
-  is not worth reporting.
+Each finding states, as text or a patch snippet in the report:
 
-Do not add a `default` that returns an empty value to silence a `no-default`
-finding. That keeps the widened return type and removes the diagnostic the fix
-exists to move.
+- **What** to change and **where**: the file, the line, and the new code.
+- **The check that verifies it**: the diagnostic the build must report when a
+  case is added (name the case), plus the tests that cover the file.
+
+For a dispatch, the change is to close it: an exhaustiveness marker in the
+catch-all arm, or the language's exhaustive form with the remaining cases
+listed. For a handler, the change is to act on the failure, or to write the
+reason it is not worth reporting.
+
+Do not propose a catch-all that returns an empty value to silence a
+dispatch finding. It keeps the gap and removes the diagnostic the change
+exists to add.
+
+When the marker takes the switched-on value, pass the value the compiler has
+narrowed to the empty case. For `switch (shape.kind)` over a tagged union that
+is `shape`, because `shape.kind` is not valid once `shape` has narrowed to
+nothing.
 
 ## Refuse when
 
-Each refusal appears in the findings with its reason. For `no-default`:
+Each refusal appears in the report with its reason. For a dispatch:
 
-- **The switched-on type is not a union of literal types.** An open domain.
-  Falling through is the design.
-- **An exhaustiveness check follows the switch.** A helper call or a
-  `const x: never = v` after the clauses closes the union as a `default` would.
-- **Control continues past the switch.** A clause that `break`s, falls through
-  an `if`, or a statement after the switch makes the clauses a partial dispatch
-  with a fallback behind them.
-- **The enclosing function declares a return type.** A type that excludes an
-  absent value gives TS2366 on a new case. A type that admits one makes the
-  unhandled case part of the contract.
-- **The function is a callback whose contextual return type excludes an absent
-  value.** A new case is a type error at the call that passes it. A callback
-  typed to return `void`, `unknown`, or `any` is not refused.
-- **`strictNullChecks` is off** for the project. The inferred return type does
-  not widen.
-- **The inferred return type already admits an absent value.**
+- **The switched-on type is not a finite set.** An open domain. Falling
+  through is the design.
+- **A closing marker follows the dispatch.** It closes the set as a catch-all
+  arm would.
+- **Control continues past the dispatch.** An arm that breaks or falls out, a
+  last empty arm, or a statement after the dispatch makes the dispatch a
+  partial one with a fallback behind it.
+- **The enclosing function declares a return type that already makes the
+  compiler report the new case.** A new case is reported there.
+- **The dispatch is a callback whose expected return type already reports a
+  new case.**
+- **The language already requires exhaustiveness for this form** and no
+  catch-all hides it.
 
-For `empty-catch`: the body holds a comment. The comment states the intent the
-rule asks for.
+For a handler: the body holds a comment that states why the failure is
+ignored.
 
-## Verify
-
-A report-only run edits nothing and needs no verification. After a fix:
-
-1. Run the repository's type check. If the union has an unhandled case, the
-   new `default` makes it fail and name that case.
-2. Run the tests of the package the edit touched.
-3. Run the scan again on the same scope. The fixed site must be gone.
-
-If the repository's tests do not cover the changed file, say so in the
-summary. Do not call the edit verified.
+Proposed changes depend on `references/languages.md` for each language's
+forms. Read `references/checks.md` for the bound of each check.
