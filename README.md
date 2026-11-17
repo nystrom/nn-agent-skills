@@ -137,6 +137,16 @@ are characterization tests, written to a separate `*.generated` test file; an
 optional review pass on a stronger model judges whether each pinned behavior is
 correct.
 
+### unhandled-case-scan
+
+Finds the TypeScript sites where a case can go unhandled without a compile
+error: a `switch` over a finite union with no `default`, whose missing case would
+widen the function's inferred return type, and an empty `catch`. It reads types
+with the repository's own `typescript` package, refuses every site the compiler
+already guards, and detects the repository's exhaustiveness helper (a function
+that takes `never`) or proposes `const _exhaustive: never = value`. It reports a
+JSON file and a ranked summary, and edits only when asked.
+
 ## Install with Claude Code
 
 Add this marketplace, then install the plugin:
@@ -171,7 +181,7 @@ Invoke the skills as `$run-review-lenses`, `$adversarial-review`,
 `$dead-code-code-review`, `$ai-slop-code-review`, `$numerical-code-review`,
 `$codex-code-review` (which skips itself inside Codex),
 `$interactive-code-review`,
-`$ui-code-review`, `$concolic-test-generation`, or describe a matching task
+`$ui-code-review`, `$concolic-test-generation`, `$unhandled-case-scan`, or describe a matching task
 and let Codex select the skill.
 
 ## Install with Antigravity
