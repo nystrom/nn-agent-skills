@@ -25,7 +25,11 @@ computed over the whole tree at HEAD in every mode.
 - A diff that renames a file counts as touching the new path. Paths come from
   `git diff --name-status -z`, so quoted or non-ASCII names match. Counts come
   from lines inside hunks only.
-- A named range is diffed as given. A pull request is not resolved by the scan.
+- A named range is diffed as given, and must end at the checked-out revision
+  (`A..B` with B at HEAD, or no B). Reading the tree at another endpoint is not
+  attempted. A pull request is not resolved by the scan.
+- `--no-gh` runs no `gh` at all, for callers that must not (a fan-out lens).
+  Candidates that need the search get `unknown`.
 - The reference index reads the working tree, never the HEAD tree. With `--base`
   and a dirty tree, an uncommitted edit that removes a live reference can make a
   symbol look dead, so the scan adds a warning. Reading the HEAD tree is not
@@ -93,7 +97,9 @@ declaration.
 
 A re-export line (`export {` / `export *` / `export type {`, `pub use`,
 `from M import`, `__all__`, `module.exports`) naming a token that occurs in
-exactly two files, two times in all: the re-exporting file and one other.
+exactly two files, two times in all: the re-exporting file and one other. A
+name re-exported through two barrels occurs at least three times, so chains of
+barrels are not listed; the model traces them with find-references.
 
 - It is separate from `dead-export` because the name occurs twice there. The
   proposed change is smaller: delete the re-export and keep the declaration.

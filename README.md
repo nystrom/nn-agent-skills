@@ -55,10 +55,16 @@ Behavioral coverage, not a line-percent scolding. Standalone or via the fan-out.
 
 ### dead-code-code-review
 
-Dead-code lens: unreachable helpers, unused exports, orphaned modules, stale
-flags, commented-out blocks — with removal proposals. Treats public/exported
-API conservatively and looks for callers in other repos (`gh search`, monorepo
-siblings) before calling something dead. Standalone or via the fan-out.
+Dead-code lens for a change set or a whole repository, in any programming
+language: unreachable helpers, unused exports, orphaned modules, stale
+re-exports, dead branches and flags, commented-out blocks. A script builds a
+whole-tree reference index and lists candidates, roots, and public-API status
+(needs Node and git, and `gh` for the cross-repository search). The model
+confirms each finding from a language server, text search, or reading, treats
+the public API and other repositories' callers conservatively, and asks you
+about roots it cannot evaluate before it reports anything as dead. It reports
+findings with a proposed change and the check that verifies it, and does not
+edit files, commit, or post. Standalone or via the fan-out.
 
 ### ai-slop-code-review
 
@@ -137,21 +143,6 @@ are characterization tests, written to a separate `*.generated` test file; an
 optional review pass on a stronger model judges whether each pinned behavior is
 correct.
 
-### dead-code-scan
-
-Finds dead code in a repository in any programming language: declarations that
-nothing reaches from any root (entry points, the public API that other
-repositories use, tests, build targets, plugin and FFI exports). A text scan
-lists candidates and the roots it recognizes. The model then confirms each
-candidate from a language server, text search, or reading, surveys what the
-scan cannot see, and asks you which packages are public API and about roots it
-cannot evaluate before it reports anything as dead. The output is findings,
-each with a proposed change and the check that verifies it. The skill does not
-edit files, commit, or open pull requests. The scan needs Node and git, and
-`gh` for the cross-repository search. It is also a review lens: it follows the
-lens protocol, takes the `diff`, `repo`, or `paths` scope, and returns the
-wire format under `run-review-lenses`.
-
 ## Install with Claude Code
 
 Add this marketplace, then install the plugin:
@@ -186,7 +177,7 @@ Invoke the skills as `$run-review-lenses`, `$adversarial-review`,
 `$dead-code-code-review`, `$ai-slop-code-review`, `$numerical-code-review`,
 `$codex-code-review` (which skips itself inside Codex),
 `$interactive-code-review`,
-`$ui-code-review`, `$concolic-test-generation`, `$dead-code-scan`, or describe a matching task
+`$ui-code-review`, `$concolic-test-generation`, or describe a matching task
 and let Codex select the skill.
 
 ## Install with Antigravity

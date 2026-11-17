@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 //
-// Language-neutral helper for the dead-code-scan skill.
+// Language-neutral helper for the dead-code-code-review skill.
 //
 //   scan.mjs [scan] [options]   list candidates, roots, and skipped files
 //   scan.mjs diff-scope [opts]  print the files a change touches and the symbols it orphans
@@ -56,6 +56,9 @@ Options:
   --working-tree        With --base, include uncommitted and untracked files.
   --format wire         Print review-lens wire findings (a JSON array) instead
                         of the scan document.
+  --no-gh               Do not run gh. Every candidate that needs the
+                        cross-repository search becomes unknown, a refusal.
+                        For callers that must not run gh.
   --no-external         Skip the cross-repository search. Use only when the
                         repository has no consumers elsewhere.
   --org <owner>         GitHub owner to search. Default: owner of the origin
@@ -205,6 +208,7 @@ function parseArgs(argv) {
     acceptRoots: [],
     base: undefined,
     workingTree: false,
+    noGh: false,
     format: "scan",
     diffScopeOnly: false,
     publicApi: [],
@@ -260,6 +264,9 @@ function parseArgs(argv) {
         break;
       case "--working-tree":
         options.workingTree = true;
+        continue;
+      case "--no-gh":
+        options.noGh = true;
         continue;
       case "--format":
         options.format = value(i, "--format");
@@ -478,6 +485,12 @@ function diffInfo(root, options, index) {
   }
   let range;
   if (isRange) {
+    // The index reads the checked-out files, so the range must end there.
+    const target = options.base.split(/\.{2,3}/)[1] || "HEAD";
+    const resolve = (ref) => run("git", ["rev-parse", "--verify", `${ref}^{commit}`], root).stdout.trim();
+    if (resolve(target) === "" || resolve(target) !== resolve("HEAD")) {
+      fail(`the range ends at ${target}, which is not the checked-out revision; check it out first`);
+    }
     range = [options.base];
   } else {
     const mergeBase = run("git", ["merge-base", options.base, "HEAD"], root);
@@ -968,6 +981,9 @@ function originRepo(root) {
 
 /** Why the cross-repository search cannot run, or undefined when it can. */
 function externalBlocker(root, options) {
+  if (options.noGh) {
+    return "gh is not run in this mode (--no-gh)";
+  }
   if (run(GH, ["--version"], root).status !== 0) {
     return "gh is not installed";
   }
@@ -1141,7 +1157,7 @@ function buildFindings(found, root, options, index, blockFor, publicFor, externa
 function summarize(document) {
   const { counts, findings } = document;
   const lines = [
-    `dead-code-scan: ${counts.candidates} candidates, ${counts.reported} for the judgment pass, ${counts.refused} refused` +
+    `dead-code-code-review: ${counts.candidates} candidates, ${counts.reported} for the judgment pass, ${counts.refused} refused` +
       (counts.truncated > 0 ? `, ${counts.truncated} more not listed` : ""),
   ];
   const shown = findings.filter((f) => !f.refused);
@@ -1218,13 +1234,15 @@ function toWire(document) {
     const unjudged = f.source !== "reviewer" && (f.judgment === null || f.judgment === undefined);
     const verified = f.judgment === "confirmed" && (f.evidence_source === "lsp" || f.evidence_source === "read");
     wire.push({
-      source: "dead-code-scan",
+      source: "dead-code-code-review",
       path: f.file,
       line: f.line ?? null,
       severity: unjudged ? "low" : (WIRE_SEVERITY[f.severity] ?? "low"),
       title:
         (unjudged ? "Candidate: " : "") +
-        (f.check === "dead-reexport"
+        (typeof f.title === "string" && f.title !== ""
+          ? f.title
+          : f.check === "dead-reexport"
           ? `Remove re-export ${f.symbol ?? ""}`.trim()
           : f.symbol === undefined
             ? "Dead code"
@@ -1239,7 +1257,7 @@ function toWire(document) {
   if (document.roots.unresolved.length > 0) {
     const open = document.roots.unresolved.map((r) => `${r.id} (${r.detail})`).join("; ");
     wire.push({
-      source: "dead-code-scan",
+      source: "dead-code-code-review",
       path: ".",
       line: null,
       severity: "low",
@@ -1363,7 +1381,7 @@ function scan(argv) {
   }
   const reported = built.findings.filter((f) => !f.refused).length;
   const document = {
-    tool: "dead-code-scan",
+    tool: "dead-code-code-review",
     scope:
       (diff === undefined ? "" : `diff against ${diff.base}${diff.workingTree ? " with the working tree" : ""}; `) +
       (scopes.length === 0 ? "whole repository" : scopes.join(", ")),

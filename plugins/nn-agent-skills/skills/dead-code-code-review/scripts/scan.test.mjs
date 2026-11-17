@@ -1,4 +1,4 @@
-// Run with: node --test plugins/nn-agent-skills/skills/dead-code-scan/scripts/
+// Run with: node --test plugins/nn-agent-skills/skills/dead-code-code-review/scripts/
 //
 // Builds small repositories in a temp dir and runs scan.mjs over them. Needs
 // Node and git only. The fixtures cover TypeScript, Python, Go, Rust, Java, C,
@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 const scan = join(dirname(fileURLToPath(import.meta.url)), "scan.mjs");
 
 function tempDir() {
-  return realpathSync(mkdtempSync(join(tmpdir(), "dead-code-scan-")));
+  return realpathSync(mkdtempSync(join(tmpdir(), "dead-code-code-review-")));
 }
 
 function repo(files) {
@@ -142,7 +142,7 @@ test("the scan writes nothing into the repository", () => {
   run(root, [...local, "--out", out]);
   const after = spawnSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" }).stdout;
   assert.equal(after, before);
-  assert.equal(JSON.parse(readFileSync(out, "utf8")).tool, "dead-code-scan");
+  assert.equal(JSON.parse(readFileSync(out, "utf8")).tool, "dead-code-code-review");
 });
 
 test("--out inside the repository exits 2", () => {
@@ -666,7 +666,7 @@ test("--format wire prints review-lens findings and a headline", () => {
   assert.deepEqual(Object.keys(finding), [
     "source", "path", "line", "severity", "title", "body", "suggested_fix", "evidence",
   ]);
-  assert.equal(finding.source, "dead-code-scan");
+  assert.equal(finding.source, "dead-code-code-review");
   assert.equal(finding.severity, "low");
   assert.match(finding.body, /Unjudged scan candidate/);
   assert.match(finding.evidence, /^Inferred: text evidence;/);
@@ -744,4 +744,41 @@ test("a dirty working tree is a warning in diff scope", () => {
 test("--working-tree rejects a range", () => {
   const result = run(changed(), [...ext, "--base", "base..HEAD", "--working-tree"]);
   assert.equal(result.status, 2);
+});
+
+test("--no-gh runs no gh and refuses candidates as unknown", () => {
+  const marker = join(tempDir(), "ran");
+  const gh = join(tempDir(), "gh");
+  writeFileSync(gh, `#!/bin/sh\ntouch ${marker}\nexit 0\n`);
+  chmodSync(gh, 0o755);
+  const found = bySymbol(run(repo(fixture), ["--no-gh", "--not-public", "."], { DEAD_CODE_SCAN_GH: gh }).document);
+  assert.equal(found.get("tsDead").category, "unknown");
+  assert.match(found.get("tsDead").evidence, /--no-gh/);
+  assert.equal(spawnSync("test", ["-e", marker]).status, 1);
+});
+
+test("a range that does not end at the checked-out revision exits 2", () => {
+  const result = run(changed(), [...ext, "--base", "base..base"]);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /not the checked-out revision/);
+});
+
+test("wire keeps a finding's own title", () => {
+  const file = join(tempDir(), "titled.json");
+  writeFileSync(
+    file,
+    JSON.stringify({
+      roots: { found: [], unresolved: [] },
+      findings: [
+        {
+          id: "dc-1", source: "script", evidence_source: "read", file: "a.ts", symbol: "api", severity: "low",
+          title: "Verify external callers before removing api", evidence: "e", proposal: "p",
+          refused: false, judgment: "downgraded", judgment_reason: "public candidate",
+        },
+      ],
+    })
+  );
+  const result = run(tempDir(), ["wire", file]);
+  assert.equal(result.document[0].title, "Verify external callers before removing api");
+  assert.match(result.stderr, /headline: approve/);
 });
