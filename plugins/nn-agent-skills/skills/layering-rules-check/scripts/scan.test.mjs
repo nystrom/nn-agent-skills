@@ -146,7 +146,7 @@ describe("scan.mjs", () => {
     const hits = findings(repo).filter((f) => f.check === "undeclared-package-dep");
     assert.equal(hits.length, 1);
     assert.equal(hits[0].severity, "high");
-    assert.equal(hits[0].sources.length, 1);
+    assert.equal(hits[0].sources.length, 2);
   });
 
   it("reads pnpm-workspace.yaml with comments and ignores non-member manifests", () => {
