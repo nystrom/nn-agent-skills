@@ -137,6 +137,17 @@ are characterization tests, written to a separate `*.generated` test file; an
 optional review pass on a stronger model judges whether each pinned behavior is
 correct.
 
+### dead-code-scan
+
+Scans a JavaScript or TypeScript repository for exported declarations whose
+name occurs nowhere else, and for nested-barrel re-exports that only the barrel
+and its source file name. Each candidate is checked against the package
+manifests and, through `gh search code`, against other repositories. A symbol
+is reported only when the scan can show that no outside code uses it; anything
+else is a recorded refusal. It writes a findings JSON file and a short ranked
+summary, proposes deletions, and edits only when asked. It needs the
+repository's `typescript` package.
+
 ## Install with Claude Code
 
 Add this marketplace, then install the plugin:
@@ -171,7 +182,7 @@ Invoke the skills as `$run-review-lenses`, `$adversarial-review`,
 `$dead-code-code-review`, `$ai-slop-code-review`, `$numerical-code-review`,
 `$codex-code-review` (which skips itself inside Codex),
 `$interactive-code-review`,
-`$ui-code-review`, `$concolic-test-generation`, or describe a matching task
+`$ui-code-review`, `$concolic-test-generation`, `$dead-code-scan`, or describe a matching task
 and let Codex select the skill.
 
 ## Install with Antigravity
