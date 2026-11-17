@@ -139,12 +139,15 @@ correct.
 
 ### unused-abstraction-scan
 
-Finds TypeScript indirection that no production code reads: a field whose doc
-comment says it has no effect, an options type with no fields, and an ignored
-options parameter whose type nothing reads. A bundled script (Node 20+, no
-packages) finds the candidates, counts readers, and checks whether the symbol
-leaves its package, with `gh search code` for published packages. It reports
-findings and refusals with evidence, and edits only when asked. A symbol it
+Finds indirection that no code reads, in any language: a field whose comment
+says it has no effect, a parameter or type with zero readers, and an options
+type with no members. The model uses a language server when one is available
+and falls back to text search and reading. Text-based helper scripts (Node 20+,
+no packages) list candidates, count readers, and check whether a symbol leaves
+its package, with `gh search code` for published packages. The model then
+confirms or drops each candidate by reading the code and surveys what the
+helpers cannot see. Output is findings, each with its evidence source, a
+judgment, and a proposed change. The skill never edits files. A symbol it
 cannot prove internal is a refusal.
 
 ## Install with Claude Code

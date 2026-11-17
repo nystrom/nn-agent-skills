@@ -1,167 +1,153 @@
 # Check catalog
 
-One entry per check in `scripts/scan.mjs`: the rule it rests on, how it
-decides, and what it cannot see. A check with no stated rule is a guess about
-the codebase, and a guess that fires is a bug report against correct code.
+One entry per check: the rule it rests on, the evidence it uses, and what no
+helper or tool proves. Language forms are in `languages.md`. A check with no
+stated rule is a guess about the codebase, and a guess that fires is a bug
+report against correct code.
 
-Every check asks one question in a different syntactic place: does any
-production module read this?
+Every check asks one question: does any production code read this? Evidence
+comes from a language server (`lsp`) when one is available, from text search
+(`text`), and always from reading the code (`read`). Text search proves that a
+name has no match, not that nothing uses the thing. Each "Bound" below is a
+place where the model reads the code itself.
 
-## How reads are counted
+## What counts as a read
 
-A field is read when production code contains `.name` or `?.name` (also when
-the access is split across lines), a quoted `"name"`, `'name'`, or `` `name` ``,
-or the name inside a destructuring pattern, one level of nested braces
-included (`const { name } = x`, `({ name }: Options)`,
-`({ a: { name } }: Opts)`). Comment-only lines do not count.
+- With `lsp`: a reference that the server resolves to the declaration and that
+  is not the declaration, not an import or export list entry, and not in a
+  test file.
+- With `text` (`survey.mjs refs`): a word match outside comment lines. The
+  `access` shape (`.name`, `->name`, `::name`) is a read in most languages. A
+  declaration, a keyed literal (`name: value`), and a keyword argument are not
+  reads. Quoted names (`"name"`) and destructuring or pattern-matching
+  occurrences may be reads: look at each.
+- A test is never a read. A test that names an inert field is a finding for
+  test review. The proposal names such tests, because a change that leaves
+  them out is incomplete.
 
-A `name:` search is wrong for liveness. A caller writing `{ immediate: true }`
-and a declaration `immediate: boolean` both match it and neither reads
-anything. A member access is the shape that reads.
+Bounds of the text search:
 
-Quoted keys and destructuring also match unrelated code that uses the same
-word. That error direction is intended: a missed read becomes a wrong
-deletion, and an extra read becomes a refusal.
-
-Bounds of the search:
-
-- It is textual. A field read through `Object.keys`, `...spread` into another
-  type, a mapped type, a getter on a different object, or reflection is not
-  found by name unless a quoted key or destructuring shows it. The type check
-  after an edit is the second line of defense for compile-time reads.
-- Destructuring nested more than one brace level deep is not found.
-- It reads TypeScript only. A JavaScript file that reads the field is not seen.
-- A TypeScript file the script cannot read (a symlink to a file outside the
-  tree, a file over 2 MB, an unreadable file) is listed in `skippedFiles`, and
-  the run refuses every proposal.
+- It matches names, not symbols. Two unrelated declarations with one name
+  share matches.
+- It does not see reflection, serialization by field name, dynamic lookup,
+  framework wiring by name, or generated code.
+- It does not parse function bodies, destructuring, or nested patterns.
+- Source files it cannot read are listed in `skippedFiles`. Open the ones you
+  can. When you cannot establish that a skipped file holds no reader, keep the
+  refusal.
 
 ## `inert-doc`
 
-A declaration whose own comment says it does nothing.
+A comment on a field, option, or parameter that says it does nothing.
 
-- Rule: when source comments are the repository's record of intent, a comment
-  that says setting a field has no effect is the repository asserting the
-  field is inert. The check confirms the assertion against the readers and
-  does not trust it.
-- Phrases: `is not implemented`, `has no effect`, `is accepted but`,
-  `does nothing`, on a comment line (case-insensitive). The comment attaches to
-  the first following line that is neither comment nor blank.
-- Two shapes come out of the same signal. A comment on an interface field names
-  the deletion target. A comment on a callable is refused: what it calls inert
-  may be an options parameter, which is a fact about the parameter's type, and
-  that type's own field entry reports the deletion.
-- A field whose comment says it has no effect while production code reads it is
-  a refusal, not a dropped candidate. The comment and the code disagree, and
-  which is wrong is a judgment.
-- The proposal names the test files that stop compiling once the field is
-  gone: a `.name` access, a `name:` key, or a shorthand `{ name }` in a test
-  file. This search is broader than the liveness search on purpose. It words
-  the proposal and never decides whether to report.
+- Rule: when comments are the repository's record of intent, a comment that
+  says setting a field has no effect is the repository asserting the field is
+  inert. The check confirms the assertion against the readers and does not
+  trust it.
+- Candidates: `survey.mjs inert` lists comments with `is not implemented`,
+  `has no effect`, `is accepted but`, `does nothing`, `is ignored`, or
+  `is unused` (case-insensitive; `--phrase` replaces the list), and the first
+  line after the comment that is neither comment nor blank. The model names the
+  symbol from that line.
+- Evidence: `lsp` find-references or `text` `refs` on the symbol, then `read`.
+- A field whose comment says it has no effect while code reads it is a
+  refusal. The comment and the code disagree, and which is wrong is a
+  judgment.
+- A comment on a function or method often describes an inert parameter. The
+  deletion belongs to the parameter or its type, not to the function.
 - Bound: it reads comments. A field that is inert and undocumented is not
-  found, and neither is one whose comment says so in other words.
-- A field belongs to an interface when the brace depth from the interface line
-  to the field line is exactly 1. A field of a nested object type, or a line
-  after the interface closed, has no owner and is not reported.
+  found, and neither is one whose comment says so in other words. Survey by
+  reading.
 
 ## `unread-param`
 
-A parameter the implementation marks unread, whose options type nothing reads.
+A parameter with zero readers, or a type used only by such parameters.
 
-- Rule: the lint config's `argsIgnorePattern` (default `^_`) is the
-  repository's way of writing "this parameter is deliberately unread".
-- Method: the parameter name must match that pattern and contain `option`,
-  `options`, or `opts` (case-insensitive), and be annotated with a
-  capitalized type name. The type must resolve to exactly one `interface`
-  declaration. Its own fields are enumerated and each is searched for a
-  production read. Fields that arrive through `extends` belong to the base and
-  are not counted.
+- Rule: the language's convention for "deliberately unread" (`_name`, `_`, an
+  unnamed parameter, a lint rule) is the repository's own statement that the
+  implementation does not read the parameter.
+- Candidates: unused-parameter diagnostics from the language server or the
+  compiler or linter; `survey.mjs ignored` (identifiers like `_options`; the
+  default pattern is a guess, change it with `--pattern` to the repository's
+  convention); reading.
+- Evidence: the type's own members, each checked for readers with `lsp` or
+  `text`. Members that arrive through inheritance belong to the base and are
+  not counted.
 - One ignoring function is not evidence. A function that ignores an option
-  that other functions read does not need it. The check reports only when no
-  production code reads any field of the type.
-- A line is a candidate parameter only when it is not inside an interface body
-  and nothing before the match on the line is `const`, `let`, or `var`.
-- Refused when: the type is not one readable interface (an index signature,
-  a mapped type, two declarations), it has no fields (the `empty-options`
-  entry owns that), a field is read, the type takes part in `extends`, the
-  same type has a reported field (that deletion removes this parameter's only
-  content), the parameter name appears in the same file other than in a
-  `name: Type` annotation (the name is used as a value, possibly in a
-  different function), the type is used anywhere other than as the type of an ignored
-  parameter (import and export list entries excepted), or the consumer
-  verdict is not `internal-only`.
-- Bound: a parameter written as a destructuring pattern, or named without
-  `option`, `options`, or `opts`, is not found. The script does not parse
-  function bodies. It refuses when the name appears as a value anywhere in the
-  file, and otherwise relies on the lint rule.
+  that other functions read does not need it, and the option is live. Report
+  only when no code reads any member of the type.
+- Refuse when the type is also used outside ignored parameters, takes part in
+  inheritance or interface implementation, or is declared more than once or
+  merged.
+- Bound: the helpers do not parse function bodies. A parameter that a body
+  uses, or passes on, is not unread. The model reads each function.
 
 ## `empty-options`
 
-`interface X {}` that annotates something.
+An options or config type with no members, threaded through signatures.
 
-- Rule: an optional argument whose type declares no fields carries nothing.
-- The type must appear after a `:` in at least one production file, so a
-  marker interface that is never used as an annotation is skipped.
-- `{}` accepts any non-nullish value. Removing an optional parameter does not
-  change what callers may pass. Removing a required parameter or a field type
-  does. The check therefore refuses when any production line uses the type
-  other than as `name?: X` (import and export list entries excepted).
-- Refused when: the interface is declared more than once, the file contains
-  `declare module` or `declare global` (merge points and augmentations), the
-  interface is the base of another, a use is not an optional parameter, or the
-  consumer verdict is not `internal-only`.
-- Bound: the declaration must open and close its braces on one line.
-- Bound: a field with an optional type annotation such as `cb?: X` is
-  indistinguishable from an optional parameter by this pattern. Read each use
-  before editing.
+- Rule: an optional argument whose type declares nothing carries nothing.
+- Candidates: `survey.mjs empty-types` for the listed forms, otherwise a
+  manual search.
+- Evidence: `usesInFile` and `usesInOtherProductionFiles` from the helper, or
+  find-references. Then read each use.
+- An empty type can be a marker, an extension point, or a merge target (an
+  interface merged in several files, an augmentation). Read for these before
+  proposing removal.
+- In some languages an empty structural type accepts any non-null value.
+  Removing an optional parameter then changes nothing for callers, while
+  removing a required parameter or a field type does. Propose removal only
+  when every use is an optional parameter, and say so.
+- Bound: forms the helper does not list are not found.
 
 ## Consumer verdict
 
 The verdict decides every proposal, because every proposal deletes something
-that may be part of a public signature. It is computed per owning symbol:
+that may be part of a public signature. `survey.mjs verdict` computes it per
+symbol:
 
-1. Another package in the repository (a different nearest `package.json`) names
-   the symbol: `exported-with-hits`.
-2. The package is `"private": true`, or the user passed
-   `--assume-unpublished`: `internal-only`.
+1. Another package in the repository (a different nearest manifest) names the
+   symbol: `exported-with-hits`.
+2. The package is private (`"private": true`, `publish = false`, the Python
+   `Private :: Do Not Upload` classifier, a Go `internal/` directory), or the
+   user passed `--assume-unpublished`: `internal-only`.
 3. `--offline`: `unknown`.
-4. `gh search code "<symbol> <package name>"` over at most 10 symbols per run.
+4. `gh search code "<symbol> <package name>"`, at most 10 queries per run.
    Hits in other repositories: `exported-with-hits`. No hits:
    `exported-no-hits`. Any failure, a missing `gh`, no login, or an unnamed
    package: `unknown`.
 
-The verdict covers a symbol's name only. A caller in another package, or in a
-JavaScript file, can pass the field in an object literal to an exported
-function without naming the type. The scan does not search for those callers.
-Every reported finding says so in `evidence`, and the repository's type check
-after the edit is the gate for compile-time callers.
-
-The scan does not check whether a published package re-exports the symbol from
-its entry point. It treats every symbol of a published package as possibly
-public. This refuses more than necessary, and no check clears a symbol the
-scan could not prove internal.
+The verdict covers a symbol's name. A caller in another package or language
+can pass the value without naming the type: an object literal, a keyword
+argument, a reflective call. The helpers do not search for those callers. The
+proposal names the check that would catch them (the build, the type check, the
+tests). The scan also does not check whether a published package re-exports
+the symbol from its entry point. It treats every symbol of a published package
+as possibly public. This refuses more than necessary, and nothing clears a
+symbol that was not shown to be internal.
 
 ## The design argument
 
-Every proposal is held against the written argument for its shape before it
-ships: the file's leading comment block, then `DESIGN.md`, `ARCHITECTURE.md`,
-and `README.md` from the file's directory up to its package root. A
-whole-word mention of the target or its interface is quoted into `evidence`.
-It does not refuse the finding.
-
-The word boundary is what makes the quote worth reading. A substring match on
-`transaction` pulls in unrelated sentences.
+Hold every proposal against the written argument for its shape: the file's
+leading comment, a design or architecture document next to the code, and the
+package README. A whole-word mention of the target is quoted into `evidence`.
+It does not decide the finding. The word boundary is what makes the quote
+worth reading: a substring match pulls in unrelated sentences.
 
 ## Not checks
 
-- **An abstraction with one implementation and one caller.** TypeScript is
-  structurally typed, so an `implements` clause does not enumerate the
-  implementations: an object literal satisfies an interface without one. A
-  caller count cannot recover the implementation count either, because the
-  missing implementations are the thing being counted.
+The helpers do not report these. The judgment pass surveys them by reading,
+weighs each against a documented reason for the shape, and labels what it
+finds `source: reviewer`.
+
+- **An abstraction with one implementation and one caller.** In a language
+  with structural typing, an object can satisfy an interface without naming it,
+  so an `implements` clause does not enumerate implementations. A caller count
+  cannot recover the implementation count either, because the missing
+  implementations are the thing being counted. Read the code.
 - **A wrapper that only forwards.** A seam is a thin wrapper that lets one
-  implementation be replaced without touching a consumer. A forwarding wrapper
-  with a written argument for it is correct code, and a check would have to
-  refuse it.
+  implementation be replaced without touching a consumer. A forwarding
+  wrapper with a written argument for it is correct code.
 - **A field that never varies.** A caller that always passes the same value
   does not make the option inert: a test or another caller may pass the other
   value, and the default is behavior.
