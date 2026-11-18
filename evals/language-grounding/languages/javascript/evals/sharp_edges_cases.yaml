@@ -1,0 +1,216 @@
+# Evals for JavaScript sharp edges — adversarial output prediction
+#
+# Same design as the Python/Julia edge-case suites: show code, ask what it
+# prints or evaluates to. No other language is named. Each case targets a
+# specific JavaScript behavior that is non-obvious or actively surprising.
+# Expected outputs were verified against Node.js.
+#
+# Skills exercised: javascript-sharp-edges
+
+cases:
+
+  - id: js.edge.typeof_null
+    skill: javascript-sharp-edges
+    topic: typeof_null
+    prompt: >
+      What does this evaluate to?
+    code: |
+      typeof null
+    choices:
+      - '"null"'
+      - '"object"'
+      - '"undefined"'
+    expected_output: '"object"'
+    wrong_output_reason: >
+      '"null"' — assumes typeof reflects the value. typeof null has returned
+      "object" since the first version of JavaScript; it is a historic bug that
+      cannot be changed without breaking the web.
+
+  - id: js.edge.nan_self_inequality
+    skill: javascript-sharp-edges
+    topic: nan
+    prompt: >
+      What does this evaluate to?
+    code: |
+      NaN === NaN
+    choices:
+      - "true"
+      - "false"
+    expected_output: "false"
+    wrong_output_reason: >
+      "true" — NaN is the only value not equal to itself. Use Number.isNaN() to
+      test for NaN.
+
+  - id: js.edge.negative_zero_object_is
+    skill: javascript-sharp-edges
+    topic: negative_zero
+    prompt: >
+      What does this evaluate to?
+    code: |
+      Object.is(-0, 0)
+    choices:
+      - "true"
+      - "false"
+    expected_output: "false"
+    wrong_output_reason: >
+      "true" — -0 === 0 is true, but Object.is distinguishes -0 from 0.
+
+  - id: js.edge.empty_array_loose_negation
+    skill: javascript-sharp-edges
+    topic: loose_equality
+    prompt: >
+      What does this evaluate to?
+    code: |
+      [] == ![]
+    choices:
+      - "false"
+      - "true"
+    expected_output: "true"
+    wrong_output_reason: >
+      "false" — ![] is false, then [] == false coerces [] to "" and false to 0,
+      giving "" == 0, which is true. A canonical == coercion trap.
+
+  - id: js.edge.parseint_partial
+    skill: javascript-sharp-edges
+    topic: parseint
+    prompt: >
+      What does this evaluate to?
+    code: |
+      parseInt("10abc")
+    choices:
+      - "NaN"
+      - "10"
+      - "0"
+    expected_output: "10"
+    wrong_output_reason: >
+      "NaN" — that is what Number("10abc") returns. parseInt parses leading
+      numeric characters and stops at the first non-numeric one.
+
+  - id: js.edge.var_loop_closure
+    skill: javascript-sharp-edges
+    topic: var_hoisting
+    prompt: >
+      What does this program print?
+    code: |
+      for (var i = 0; i < 3; i++) {
+        setTimeout(() => console.log(i), 0);
+      }
+    choices:
+      - "0 1 2"
+      - "3 3 3"
+    expected_output: "3 3 3"
+    wrong_output_reason: >
+      "0 1 2" — var creates a single function-scoped binding shared by all
+      closures. By the time the callbacks run, the loop has finished and i is 3.
+      let would create a per-iteration binding and print 0 1 2.
+
+  - id: js.edge.this_context_loss
+    skill: javascript-sharp-edges
+    topic: this_binding
+    prompt: >
+      What does this program print?
+    code: |
+      class Greeter {
+        constructor() { this.name = "Alice"; }
+        greet() { return `Hello, ${this.name}`; }
+      }
+      const g = new Greeter();
+      const fn = g.greet;
+      console.log(fn());
+    choices:
+      - "Hello, Alice"
+      - "Hello, undefined"
+    expected_output: "Hello, undefined"
+    wrong_output_reason: >
+      "Hello, Alice" — extracting the method loses the implicit this binding. A
+      standalone call sets this to undefined (strict/module) or the global
+      object, so this.name is undefined.
+
+  - id: js.edge.sparse_filter
+    skill: javascript-sharp-edges
+    topic: sparse_arrays
+    prompt: >
+      What does this evaluate to?
+    code: |
+      [1, , 3].filter(() => true).length
+    choices:
+      - "3"
+      - "2"
+    expected_output: "2"
+    wrong_output_reason: >
+      "3" — the array has a hole at index 1, not an undefined element. Most
+      array methods skip holes, so filter never visits index 1 and the result
+      has two elements.
+
+  - id: js.edge.new_array_hole
+    skill: javascript-sharp-edges
+    topic: sparse_arrays
+    prompt: >
+      What does this evaluate to?
+    code: |
+      0 in new Array(3)
+    choices:
+      - "true"
+      - "false"
+    expected_output: "false"
+    wrong_output_reason: >
+      "true" — new Array(3) creates three holes, not three undefined values. No
+      index has an own property, so `0 in` is false. Use .fill() to populate.
+
+  - id: js.edge.max_safe_integer
+    skill: javascript-sharp-edges
+    topic: floating_point
+    prompt: >
+      What does this evaluate to?
+    code: |
+      9007199254740992 === 9007199254740993
+    choices:
+      - "false"
+      - "true"
+    expected_output: "true"
+    wrong_output_reason: >
+      "false" — both literals exceed Number.MAX_SAFE_INTEGER (2**53 - 1) and
+      round to the same IEEE 754 double, so they compare equal. Use BigInt for
+      exact large integers.
+
+  - id: js.edge.switch_fallthrough
+    skill: javascript-sharp-edges
+    topic: switch
+    prompt: >
+      With x set to 1, what does this program print?
+    code: |
+      let x = 1;
+      switch (x) {
+        case 1:
+          console.log("one");
+        case 2:
+          console.log("two");
+          break;
+        case 3:
+          console.log("three");
+          break;
+      }
+    choices:
+      - "one"
+      - "one then two"
+      - "one then two then three"
+    expected_output: "one then two"
+    wrong_output_reason: >
+      "one" — case 1 has no break, so execution falls through into case 2 and
+      prints "two" before the break stops it.
+
+  - id: js.edge.emoji_length
+    skill: javascript-sharp-edges
+    topic: unicode
+    prompt: >
+      What does this evaluate to?
+    code: |
+      "😀".length
+    choices:
+      - "1"
+      - "2"
+    expected_output: "2"
+    wrong_output_reason: >
+      "1" — strings are UTF-16, and the emoji is outside the Basic Multilingual
+      Plane, so it is stored as a surrogate pair of two code units. [..."😀"]
+      would have length 1 because the iterator handles surrogates.

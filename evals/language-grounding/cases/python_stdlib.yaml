@@ -1,0 +1,163 @@
+# Evals for python/stdlib skill
+# Tests that an agent knows correct function names, signatures, and module locations
+# for the Python standard library — and does not hallucinate non-existent APIs.
+#
+# Skills exercised: python/stdlib, python/types
+
+cases:
+
+  - id: py.stdlib.json_parse_not_exist
+    skill: python/stdlib
+    topic: json_api
+    prompt: >
+      A developer writes `json.parse(text)` to parse a JSON string. What is wrong?
+    code: |
+      import json
+      data = json.parse('{"key": "value"}')
+    expected_behavior:
+      must_not_say:
+        - "correct"
+        - "json.parse exists"
+        - "works in Python"
+      must_say_one_of:
+        - "json.loads"
+        - "AttributeError"
+        - "parse does not exist"
+        - "no attribute 'parse'"
+
+  - id: py.stdlib.re_match_vs_search
+    skill: python/stdlib
+    topic: re_api
+    prompt: >
+      Why does this return None even though the pattern "\\d+" appears in the string?
+    code: |
+      import re
+      result = re.match(r"\d+", "abc123")
+      print(result)
+    expected_behavior:
+      must_not_say:
+        - "should work"
+        - "returns a match"
+        - "the pattern is wrong"
+      must_say_one_of:
+        - "match only matches at the start"
+        - "re.search"
+        - "beginning of the string"
+
+  - id: py.stdlib.datetime_utcnow_deprecated
+    skill: python/stdlib
+    topic: datetime_api
+    prompt: >
+      What is the recommended replacement for `datetime.utcnow()` in Python 3.12+?
+    code: |
+      from datetime import datetime
+      now = datetime.utcnow()
+    expected_behavior:
+      must_not_say:
+        - "utcnow() is fine"
+        - "no replacement needed"
+        - "datetime.now()"
+      must_say_one_of:
+        - "timezone.utc"
+        - "datetime.now(tz=timezone.utc)"
+        - "deprecated"
+        - "aware datetime"
+
+  - id: py.stdlib.counter_import
+    skill: python/stdlib
+    topic: collections_api
+    prompt: >
+      What import is needed to use Counter in Python?
+    code: |
+      c = Counter("hello world")
+    expected_behavior:
+      must_not_say:
+        - "no import needed"
+        - "from builtins import Counter"
+        - "Counter is a builtin"
+      must_say_one_of:
+        - "from collections import Counter"
+        - "collections.Counter"
+
+  - id: py.stdlib.itertools_groupby_sort_first
+    skill: python/stdlib
+    topic: itertools_api
+    prompt: >
+      This code is supposed to group all items by their first letter but produces unexpected results.
+      What is wrong?
+    code: |
+      import itertools
+      words = ["banana", "apple", "avocado", "blueberry", "cherry"]
+      for key, group in itertools.groupby(words, key=lambda w: w[0]):
+          print(key, list(group))
+    expected_behavior:
+      must_not_say:
+        - "works correctly"
+        - "groups all a-words together"
+        - "the lambda is wrong"
+      must_say_one_of:
+        - "only groups consecutive"
+        - "sort first"
+        - "sorted(words"
+        - "groupby only groups adjacent"
+
+  - id: py.stdlib.json_dump_vs_dumps
+    skill: python/stdlib
+    topic: json_api
+    prompt: >
+      What is the difference between `json.dump` and `json.dumps`?
+    expected_behavior:
+      must_say_one_of:
+        - "dump writes to a file"
+        - "dumps returns a string"
+        - "dump takes a file object"
+        - "dumps serializes to str"
+
+  - id: py.stdlib.pathlib_read
+    skill: python/stdlib
+    topic: pathlib_api
+    prompt: >
+      What is the idiomatic way to read an entire text file as a string using pathlib?
+    code: |
+      from pathlib import Path
+      p = Path("config.json")
+      # how to read it?
+    expected_behavior:
+      must_say_one_of:
+        - "p.read_text()"
+        - "read_text"
+
+  - id: py.stdlib.random_shuffle_return
+    skill: python/stdlib
+    topic: random_api
+    prompt: >
+      What does `random.shuffle(lst)` return?
+    code: |
+      import random
+      lst = [1, 2, 3, 4, 5]
+      result = random.shuffle(lst)
+      print(result)
+    choices:
+      - "A new shuffled list"
+      - "None (shuffles in place)"
+      - "The same list shuffled"
+      - "A random integer"
+    expected_output: "None"
+    wrong_output_reason: >
+      "A new shuffled list" — random.shuffle mutates the list in place and returns None,
+      like list.sort(). To get a new shuffled list without modifying the original,
+      use random.sample(lst, len(lst)) or lst_copy = lst[:]; random.shuffle(lst_copy).
+
+  - id: py.stdlib.typing_callable_import
+    skill: python/stdlib
+    topic: typing_imports
+    prompt: >
+      This code raises a NameError. What import is missing?
+    code: |
+      def apply(func: Callable[[int], str], x: int) -> str:
+          return func(x)
+    expected_behavior:
+      must_say_one_of:
+        - "from typing import Callable"
+        - "from collections.abc import Callable"
+        - "Callable is not a builtin"

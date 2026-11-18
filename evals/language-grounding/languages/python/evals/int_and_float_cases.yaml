@@ -1,0 +1,330 @@
+# Evals for Python integer and float numeric semantics — adversarial output prediction
+#
+# Big integer topics:
+#   - integers are arbitrary precision; no overflow, no silent wrap
+#   - sys.maxsize is a platform limit on C-sized integers, not the max int value
+#   - large integers are exact; float conversion of large ints loses precision
+#   - int-to-float roundtrip can be lossy for values > 2**53
+#   - comparing a large int to a float: the int is converted to float for comparison,
+#     which may lose the distinction
+#   - integer arithmetic (// and %) is always exact
+#
+# Float topics:
+#   - int(x) truncates toward zero; math.floor(x) floors toward -inf
+#   - round(x, n) uses IEEE 754 round-half-to-even AND float representation matters
+#   - 1e308 * 10 overflows to inf without raising
+#   - catastrophic cancellation: (large + small) - large == 0.0
+#   - float spacing at large magnitudes (ulp > 1)
+#   - Decimal vs float for exact decimal arithmetic
+#   - 0.1 in float is not exactly 0.1
+#
+# Skills exercised: python-semantics, python-sharp-edges
+
+cases:
+
+  # ── Big integers ────────────────────────────────────────────────────────────
+
+  - id: py.int.no_overflow
+    skill: python-semantics
+    topic: integer_precision
+    prompt: >
+      What does this program print?
+    code: |
+      x = 2**100
+      print(x > 0)
+      print(type(x))
+    choices:
+      - "False\n<class 'int'>"
+      - "True\n<class 'int'>"
+      - "OverflowError"
+      - "True\n<class 'float'>"
+    expected_output: "True\n<class 'int'>"
+    wrong_output_reason: >
+      "OverflowError" — assumes Python integers overflow like fixed-width types.
+      Python integers are arbitrary precision objects; 2**100 is computed exactly
+      and remains an int. No overflow, no silent wrap-around.
+
+  - id: py.int.maxsize_not_max_int
+    skill: python-semantics
+    topic: integer_precision
+    prompt: >
+      What does this program print?
+    code: |
+      import sys
+      x = sys.maxsize
+      print(x + 1 > x)
+      print(type(x + 1))
+    choices:
+      - "False\n<class 'int'>"
+      - "True\n<class 'float'>"
+      - "True\n<class 'int'>"
+      - "OverflowError"
+    expected_output: "True\n<class 'int'>"
+    wrong_output_reason: >
+      "False" or "OverflowError" — assumes sys.maxsize is the maximum representable
+      integer. sys.maxsize is the maximum value of a C ssize_t (platform-dependent,
+      typically 2**63 - 1), used for container sizes. Python int arithmetic simply
+      grows beyond it.
+
+  - id: py.int.float_loses_large_int
+    skill: python-sharp-edges
+    topic: int_float_precision
+    prompt: >
+      What does this program print?
+    code: |
+      x = 2**53 + 1
+      print(x == 2**53)
+      print(float(x) == float(2**53))
+    choices:
+      - "False\nFalse"
+      - "True\nTrue"
+      - "False\nTrue"
+    expected_output: "False\nTrue"
+    wrong_output_reason: >
+      "False\nFalse" — assumes float preserves integer values of any size.
+      int comparison is exact: 2**53 + 1 != 2**53. But float64 has 53 bits of
+      mantissa; at the magnitude of 2**53 the spacing between consecutive floats
+      is 2, so 2**53 + 1 rounds to 2**53 when converted to float.
+
+  - id: py.int.large_int_float_comparison
+    skill: python-sharp-edges
+    topic: int_float_precision
+    prompt: >
+      What does this program print?
+    code: |
+      a = 2**53 + 1        # exact int
+      b = float(2**53)     # float, rounded down from a
+      print(a > b)
+      print(a == b)
+    choices:
+      - "False\nFalse"
+      - "True\nFalse"
+      - "False\nTrue"
+      - "True\nTrue"
+    expected_output: "True\nFalse"
+    wrong_output_reason: >
+      "False\nTrue" — assumes comparing int and float converts both to float,
+      making 2**53+1 appear equal to 2**53. Python's mixed int/float comparison
+      avoids precision loss: the int is compared exactly, so 2**53+1 is correctly
+      seen as greater than float(2**53) even though float(2**53+1) == float(2**53).
+
+  - id: py.int.roundtrip_loss
+    skill: python-sharp-edges
+    topic: int_float_precision
+    prompt: >
+      What does this program print?
+    code: |
+      x = 2**53 + 1
+      print(x == int(float(x)))
+    choices:
+      - "True"
+      - "False"
+    expected_output: "False"
+    wrong_output_reason: >
+      "True" — assumes int → float → int is a lossless roundtrip.
+      float(2**53 + 1) rounds to 2**53 (float spacing at that magnitude is 2),
+      so int(float(x)) == 2**53, which differs from x by 1.
+
+  - id: py.int.exact_arithmetic
+    skill: python-semantics
+    topic: integer_precision
+    prompt: >
+      What does this program print?
+    code: |
+      n = 10**30
+      print(n // 7 * 7 + n % 7 == n)
+      print(type(n // 7))
+    choices:
+      - "False\n<class 'int'>"
+      - "True\n<class 'float'>"
+      - "True\n<class 'int'>"
+    expected_output: "True\n<class 'int'>"
+    wrong_output_reason: >
+      "False" — assumes large integer arithmetic accumulates rounding error.
+      Python integer // and % are exact for all int operands regardless of size.
+      The identity q * b + r == a always holds exactly; no float is involved.
+
+  - id: py.int.int_from_float_truncates
+    skill: python-semantics
+    topic: int_float_conversion
+    prompt: >
+      What does this program print?
+    code: |
+      import math
+      print(int(2.9))
+      print(int(-2.9))
+      print(math.floor(2.9))
+      print(math.floor(-2.9))
+    choices:
+      - "2\n-2\n2\n-3"
+      - "3\n-3\n3\n-3"
+      - "2\n-3\n2\n-3"
+      - "2\n-2\n2\n-2"
+    expected_output: "2\n-2\n2\n-3"
+    wrong_output_reason: >
+      "2\n-3\n2\n-3" — assumes int() and math.floor() behave identically.
+      int() truncates toward zero: int(-2.9) == -2. math.floor() rounds toward
+      -inf: math.floor(-2.9) == -3. They differ for negative non-integers.
+
+  - id: py.int.factorial_exact
+    skill: python-semantics
+    topic: integer_precision
+    prompt: >
+      What does this program print?
+    code: |
+      import math
+      result = math.factorial(50)
+      print(type(result))
+      print(result % 10)   # last digit of 50!
+    choices:
+      - "<class 'float'>\n0"
+      - "<class 'int'>\n0"
+      - "OverflowError"
+      - "<class 'int'>\n5"
+    expected_output: "<class 'int'>\n0"
+    wrong_output_reason: >
+      "OverflowError" or "<class 'float'>" — assumes large factorials overflow or
+      return float. math.factorial returns an exact int. 50! ends in many zeros
+      (factors of 10 come from pairs of 2 and 5 in the prime factorization).
+
+  # ── Float precision and representation ──────────────────────────────────────
+
+  - id: py.float.round_with_float_representation
+    skill: python-sharp-edges
+    topic: rounding
+    prompt: >
+      What does this program print?
+    code: |
+      print(round(2.675, 2))
+    choices:
+      - "2.68"
+      - "2.67"
+      - "2.675"
+    expected_output: "2.67"
+    wrong_output_reason: >
+      "2.68" — assumes 2.675 is exactly representable and round-half-to-even gives 2.68.
+      The float closest to 2.675 is slightly less than 2.675, so Python rounds it
+      down to 2.67, not up. The decimal value of the float is not exactly 2.675.
+
+  - id: py.float.overflow_to_inf
+    skill: python-sharp-edges
+    topic: float_overflow
+    prompt: >
+      What does this program print?
+    code: |
+      print(1e308 * 10)
+      print(type(1e308 * 10))
+    choices:
+      - "OverflowError"
+      - "inf\n<class 'float'>"
+      - "1e+309\n<class 'float'>"
+    expected_output: "inf\n<class 'float'>"
+    wrong_output_reason: >
+      "OverflowError" — assumes Python raises on float overflow.
+      IEEE 754 defines overflow as producing inf, not an error.
+      Python follows the standard; no exception is raised.
+
+  - id: py.float.catastrophic_cancellation
+    skill: python-sharp-edges
+    topic: float_precision
+    prompt: >
+      What does this program print?
+    code: |
+      a = 1e16
+      b = 1.0
+      print((a + b) - a)
+    choices:
+      - "1.0"
+      - "0.0"
+      - "0.9999999999..."
+      - "2.0"
+    expected_output: "0.0"
+    wrong_output_reason: >
+      "1.0" — assumes floating-point addition preserves the small addend.
+      At the magnitude of 1e16, the spacing between consecutive floats (ulp) is
+      2.0, larger than 1.0. Adding 1.0 to 1e16 produces the same float as 1e16, so
+      subtracting 1e16 yields exactly 0.0. The small value is completely lost.
+      (At 1e15 the ulp is only 0.125, so the 1.0 would survive.)
+
+  - id: py.float.decimal_exact
+    skill: python-sharp-edges
+    topic: decimal_arithmetic
+    prompt: >
+      What does this program print?
+    code: |
+      from decimal import Decimal
+      print(0.1 + 0.2 == 0.3)
+      print(Decimal('0.1') + Decimal('0.2') == Decimal('0.3'))
+    choices:
+      - "True\nTrue"
+      - "False\nFalse"
+      - "False\nTrue"
+      - "True\nFalse"
+    expected_output: "False\nTrue"
+    wrong_output_reason: >
+      "True\nTrue" — assumes Python's built-in floats compute decimal arithmetic exactly.
+      float uses binary IEEE 754; 0.1 and 0.2 are not exactly representable, so their
+      sum does not exactly equal the float 0.3. Decimal uses decimal arithmetic with
+      configurable precision; Decimal('0.1') + Decimal('0.2') is exactly Decimal('0.3').
+
+  - id: py.float.repr_shortest
+    skill: python-semantics
+    topic: float_repr
+    prompt: >
+      What does this program print in Python 3?
+    code: |
+      print(repr(0.1))
+      print(0.1 == 0.10000000000000001)
+    choices:
+      - "0.1\nFalse"
+      - "0.10000000000000001\nTrue"
+      - "0.1\nTrue"
+    expected_output: "0.1\nTrue"
+    wrong_output_reason: >
+      "'0.10000000000000001'\nTrue" — expects Python 2's verbose repr.
+      Python 3 uses the shortest decimal string that round-trips to the same float.
+      repr(0.1) is '0.1', not the full expansion. But 0.1 and 0.10000000000000001
+      are the same float, so == returns True.
+
+  - id: py.float.ulp_equality_at_large_magnitude
+    skill: python-sharp-edges
+    topic: float_precision
+    prompt: >
+      What does this program print?
+    code: |
+      x = 2.0**53
+      print(x == x + 1)
+      print(x == x + 2)
+    choices:
+      - "False\nFalse"
+      - "True\nFalse"
+      - "True\nTrue"
+    expected_output: "True\nFalse"
+    wrong_output_reason: >
+      "False\nFalse" — assumes float + 1 is always distinguishable from float.
+      At 2**53, the ulp (spacing between adjacent floats) is exactly 2. Adding 1
+      rounds to the same float; adding 2 reaches the next representable value.
+
+  - id: py.float.int_float_mixed_exact_compare
+    skill: python-semantics
+    topic: int_float_comparison
+    prompt: >
+      What does this program print?
+    code: |
+      print(10**22 == float(10**22))
+      print(10**22 + 1 == float(10**22))
+    choices:
+      - "True\nTrue"
+      - "False\nFalse"
+      - "True\nFalse"
+      - "False\nTrue"
+    expected_output: "True\nFalse"
+    wrong_output_reason: >
+      "True\nTrue" — assumes both comparisons convert the int to float.
+      For the first comparison, 10**22 is exactly representable as a float so
+      == is True. For the second, Python compares the int 10**22+1 exactly against
+      the float value; since 10**22+1 is not representable as a float, Python
+      detects they are not equal even though float(10**22+1) == float(10**22).
+    note: >
+      Python's int/float comparison converts to a rational representation
+      internally to avoid precision loss, not simply to float.

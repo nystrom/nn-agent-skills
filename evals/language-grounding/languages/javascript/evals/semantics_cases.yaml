@@ -1,0 +1,132 @@
+# Evals for JavaScript semantics — adversarial output prediction
+#
+# Show code, ask what it prints or evaluates to. No other language is named.
+# Each case targets a core semantic rule: the event loop, coercion, closures,
+# truthiness, and async return values. Expected outputs were verified against
+# Node.js.
+#
+# Skills exercised: javascript-semantics
+
+cases:
+
+  - id: js.sem.event_loop_ordering
+    skill: javascript-semantics
+    topic: event_loop
+    prompt: >
+      In what order does this program print its lines?
+    code: |
+      console.log("1");
+      setTimeout(() => console.log("4"), 0);
+      Promise.resolve().then(() => console.log("2"));
+      Promise.resolve().then(() => console.log("3"));
+      console.log("end");
+    choices:
+      - "1, end, 2, 3, 4"
+      - "1, end, 4, 2, 3"
+      - "1, 2, 3, end, 4"
+    expected_output: "1, end, 2, 3, 4"
+    wrong_output_reason: >
+      "1, end, 4, 2, 3" — synchronous code runs first (1, end), then the entire
+      microtask queue drains (Promise callbacks 2, 3) before any macrotask, so
+      the setTimeout callback (4) runs last.
+
+  - id: js.sem.plus_coercion_left_to_right
+    skill: javascript-semantics
+    topic: coercion
+    prompt: >
+      What does this evaluate to?
+    code: |
+      1 + 2 + "3"
+    choices:
+      - '"33"'
+      - '"123"'
+      - "6"
+    expected_output: '"33"'
+    wrong_output_reason: >
+      '"123"' — + is left-associative. 1 + 2 evaluates numerically to 3, then
+      3 + "3" coerces to the string "33".
+
+  - id: js.sem.string_plus_number
+    skill: javascript-semantics
+    topic: coercion
+    prompt: >
+      What does this evaluate to?
+    code: |
+      "1" + 2
+    choices:
+      - '"12"'
+      - "3"
+    expected_output: '"12"'
+    wrong_output_reason: >
+      "3" — when either operand of + is a string, the other is coerced to a
+      string and concatenation occurs.
+
+  - id: js.sem.empty_array_truthy
+    skill: javascript-semantics
+    topic: truthiness
+    prompt: >
+      What does this evaluate to?
+    code: |
+      Boolean([])
+    choices:
+      - "true"
+      - "false"
+    expected_output: "true"
+    wrong_output_reason: >
+      "false" — an empty array is an object, and all objects are truthy. Only
+      false, 0, -0, 0n, "", null, undefined, and NaN are falsy.
+
+  - id: js.sem.async_returns_promise
+    skill: javascript-semantics
+    topic: async_await
+    prompt: >
+      Is x the number 42 or a Promise?
+    code: |
+      async function get() { return 42; }
+      const x = get();
+    choices:
+      - "the number 42"
+      - "a Promise that resolves to 42"
+    expected_output: "a Promise that resolves to 42"
+    wrong_output_reason: >
+      "the number 42" — an async function always returns a Promise. Without
+      await, x is Promise<42>, not 42.
+
+  - id: js.sem.closure_captures_variable
+    skill: javascript-semantics
+    topic: closures
+    prompt: >
+      What does this program print?
+    code: |
+      function counter() {
+        let n = 0;
+        return () => ++n;
+      }
+      const c = counter();
+      console.log(c(), c(), c());
+    choices:
+      - "1 1 1"
+      - "1 2 3"
+      - "0 1 2"
+    expected_output: "1 2 3"
+    wrong_output_reason: >
+      "1 1 1" — the returned closure captures the variable n by reference, not a
+      snapshot of its value, so each call increments and returns the same
+      persistent n.
+
+  - id: js.sem.const_object_mutation
+    skill: javascript-semantics
+    topic: declarations
+    prompt: >
+      Does this throw, and what is obj.a afterward?
+    code: |
+      const obj = { a: 1 };
+      obj.a = 2;
+    choices:
+      - "throws TypeError — const cannot be reassigned"
+      - "no error — obj.a is 2"
+    expected_output: "no error — obj.a is 2"
+    wrong_output_reason: >
+      "throws" — const prevents rebinding the variable, not mutating the object
+      it points to. Reassigning obj itself would throw, but mutating a property
+      is allowed.

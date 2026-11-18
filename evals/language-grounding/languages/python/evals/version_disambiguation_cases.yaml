@@ -1,0 +1,169 @@
+# Evals for Python version disambiguation
+# Tests that an agent correctly identifies which Python version introduced a feature,
+# and does not silently apply syntax or semantics from the wrong version.
+#
+# Skills exercised: python-versions, python-types, python-semantics
+
+cases:
+
+  - id: py.version.walrus_requires_38
+    skill: python-versions
+    topic: walrus_operator
+    prompt: >
+      Is `:=` (walrus operator) valid in Python 3.7?
+    code: |
+      while chunk := f.read(8192):
+          process(chunk)
+    expected_behavior:
+      must_not_say:
+        - "valid in 3.7"
+        - "always available"
+        - "supported in all versions"
+      must_say_one_of:
+        - "requires Python 3.8"
+        - "SyntaxError in 3.7"
+        - "introduced in 3.8"
+
+  - id: py.version.pattern_matching_requires_310
+    skill: python-versions
+    topic: structural_pattern_matching
+    prompt: >
+      Can I use `match`/`case` in Python 3.9?
+    code: |
+      match command:
+          case "quit":
+              quit()
+          case "go" if direction:
+              go(direction)
+    expected_behavior:
+      must_not_say:
+        - "valid in 3.9"
+        - "works in all versions"
+        - "available in 3.8"
+      must_say_one_of:
+        - "requires Python 3.10"
+        - "SyntaxError in 3.9"
+        - "introduced in 3.10"
+
+  - id: py.version.exception_groups_require_311
+    skill: python-versions
+    topic: exception_groups
+    prompt: >
+      Is `ExceptionGroup` and `except*` available in Python 3.10?
+    code: |
+      try:
+          async with asyncio.TaskGroup() as tg:
+              tg.create_task(coro())
+      except* ValueError as eg:
+          pass
+    expected_behavior:
+      must_not_say:
+        - "available in 3.10"
+        - "available in 3.9"
+        - "always available"
+      must_say_one_of:
+        - "requires Python 3.11"
+        - "introduced in 3.11"
+        - "SyntaxError or NameError in 3.10"
+
+  - id: py.version.builtin_generics_require_39
+    skill: python-versions
+    topic: type_hints
+    prompt: >
+      Is `list[int]` valid as a type hint in Python 3.8?
+    code: |
+      def f(x: list[int]) -> dict[str, int]:
+          ...
+    expected_behavior:
+      must_not_say:
+        - "valid in 3.8"
+        - "always valid"
+        - "works in all Python 3 versions"
+      must_say_one_of:
+        - "requires Python 3.9"
+        - "use List[int] from typing in 3.8"
+        - "TypeError at runtime in 3.8"
+
+  - id: py.version.tomllib_requires_311
+    skill: python-versions
+    topic: stdlib
+    prompt: >
+      Is `tomllib` in the standard library in Python 3.10?
+    expected_behavior:
+      must_not_say:
+        - "available in 3.10"
+        - "available in all versions"
+        - "always in stdlib"
+      must_say_one_of:
+        - "added in 3.11"
+        - "use tomli third-party package for 3.10"
+        - "not in stdlib until 3.11"
+
+  - id: py.version.fstring_debug_requires_38
+    skill: python-versions
+    topic: f_strings
+    prompt: >
+      Does `f"{x=}"` work in Python 3.7?
+    code: |
+      x = 42
+      print(f"{x=}")
+    expected_behavior:
+      must_not_say:
+        - "works in 3.7"
+        - "always valid in f-strings"
+      must_say_one_of:
+        - "requires Python 3.8"
+        - "SyntaxError in 3.7"
+        - "= specifier added in 3.8"
+
+  - id: py.version.taskgroup_requires_311
+    skill: python-versions
+    topic: asyncio
+    prompt: >
+      Is `asyncio.TaskGroup` available in Python 3.10?
+    code: |
+      async with asyncio.TaskGroup() as tg:
+          tg.create_task(some_coro())
+    expected_behavior:
+      must_not_say:
+        - "available in 3.10"
+        - "available in 3.9"
+        - "always in asyncio"
+      must_say_one_of:
+        - "added in 3.11"
+        - "not available in 3.10"
+        - "use asyncio.gather in older versions"
+
+  - id: py.version.typevar_syntax_requires_312
+    skill: python-versions
+    topic: type_parameter_syntax
+    prompt: >
+      Can I use `def first[T](lst: list[T]) -> T:` in Python 3.11?
+    code: |
+      def first[T](lst: list[T]) -> T:
+          return lst[0]
+    expected_behavior:
+      must_not_say:
+        - "valid in 3.11"
+        - "valid in 3.10"
+        - "always valid"
+      must_say_one_of:
+        - "requires Python 3.12"
+        - "SyntaxError in 3.11"
+        - "PEP 695 type parameter syntax added in 3.12"
+
+  - id: py.version.free_threading_requires_313
+    skill: python-versions
+    topic: free_threaded
+    prompt: >
+      Is free-threaded Python (no GIL) available in 3.12?
+    expected_behavior:
+      must_not_say:
+        - "available in 3.12"
+        - "always available"
+        - "GIL was removed in 3.12"
+      must_say_one_of:
+        - "experimental in 3.13"
+        - "opt-in in 3.13"
+        - "not available in 3.12"
+        - "PEP 703"

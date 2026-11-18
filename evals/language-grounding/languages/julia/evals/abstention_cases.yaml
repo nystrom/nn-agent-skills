@@ -1,0 +1,111 @@
+# Evals for Julia abstention behavior
+# Tests that an agent correctly abstains or qualifies when the answer depends on
+# script vs REPL context, method visibility, whole-program analysis, or
+# implementation details.
+#
+# Skills exercised: julia/semantics, julia/sharp-edges, julia/types
+
+cases:
+
+  - id: jl.abstain.soft_scope_context
+    skill: julia/sharp-edges
+    topic: scoping
+    prompt: >
+      Does this loop update s?
+    code: |
+      s = 0
+      for i in 1:5
+          s += i
+      end
+      println(s)
+    expected_behavior:
+      must_not_say:
+        - "always prints 15"
+        - "always prints 0"
+      must_say_one_of:
+        - "depends on whether this runs in a script or the REPL"
+        - "REPL: 15; script: 0 (soft scope requires global s)"
+        - "soft scope behavior differs between interactive and non-interactive contexts"
+
+  - id: jl.abstain.ambiguity_reachable
+    skill: julia/semantics
+    topic: dispatch
+    prompt: >
+      Is there a method ambiguity problem in this package?
+    code: |
+      f(x::Int, y) = "int first"
+      f(x, y::Int) = "int second"
+    expected_behavior:
+      must_not_say:
+        - "no ambiguity"
+        - "always works correctly"
+      must_say_one_of:
+        - "ambiguous if called with two Int arguments"
+        - "MethodError only surfaces at call time, not at definition"
+        - "cannot determine without knowing whether f(::Int, ::Int) is ever called"
+
+  - id: jl.abstain.type_piracy
+    skill: julia/semantics
+    topic: module_system
+    prompt: >
+      Is this safe to add to a library?
+    code: |
+      Base.+(x::String, y::String) = x * y
+    expected_behavior:
+      must_not_say:
+        - "safe"
+        - "valid Julia"
+      must_say_one_of:
+        - "type piracy"
+        - "adding methods to Base functions for Base types is type piracy"
+        - "may break downstream code that expects + on Strings to be undefined"
+
+  - id: jl.abstain.inbounds_safety
+    skill: julia/sharp-edges
+    topic: unsafe_annotations
+    prompt: >
+      Is this @inbounds annotation safe?
+    code: |
+      function f(v, n)
+          @inbounds for i in 1:n
+              v[i] += 1
+          end
+      end
+    expected_behavior:
+      must_not_say:
+        - "always safe"
+        - "Julia guarantees safety even with @inbounds"
+      must_say_one_of:
+        - "only safe if n <= length(v) is guaranteed by the caller"
+        - "out-of-bounds access with @inbounds is undefined behavior"
+        - "requires proving n does not exceed the array length"
+
+  - id: jl.abstain.revise_picks_up_struct
+    skill: julia/toolchain
+    topic: revise
+    prompt: >
+      After changing a field name in a struct definition and saving the file,
+      will Revise.jl pick up the change without restarting Julia?
+    expected_behavior:
+      must_not_say:
+        - "yes, Revise handles all changes"
+        - "reload with includet and it will work"
+      must_say_one_of:
+        - "struct redefinitions require restarting Julia"
+        - "Revise cannot update type definitions, only methods"
+
+  - id: jl.abstain.benchmark_first_call
+    skill: julia/toolchain
+    topic: benchmarking
+    prompt: >
+      Is this an accurate benchmark of f's runtime?
+    code: |
+      @time f(x)
+    expected_behavior:
+      must_not_say:
+        - "yes, accurate"
+        - "@time always gives the runtime"
+      must_say_one_of:
+        - "first call includes compilation time"
+        - "run f(x) once first to warm up, then @time"
+        - "use @benchmark from BenchmarkTools.jl for reliable measurements"

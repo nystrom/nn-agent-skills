@@ -1,0 +1,275 @@
+# Evals for Julia semantic grounding — adversarial output prediction
+#
+# Design: show Julia code, ask what it outputs. No other language named.
+# The wrong answer comes from pattern-matching to Python, NumPy, or C.
+#
+# Correct answers require knowing:
+#   - multiple dispatch selects on all argument types, not just the first
+#   - 1-based indexing; a[0] is a BoundsError
+#   - integer overflow wraps silently (unlike Python's arbitrary-precision int)
+#   - column-major storage (unlike NumPy's row-major default)
+#   - immutable structs are copied by value; mutable structs are by reference
+#   - arrays are always passed by reference
+#   - `x + 1` is not broadcast; `.+` is required for element-wise ops
+#   - soft scope in scripts: loop body needs `global` to update outer variable
+#   - `nothing` does not propagate; `missing` does
+#   - `NaN == NaN` is false; `NaN === NaN` is true
+#
+# Skills exercised: julia/semantics, julia/sharp-edges
+
+cases:
+
+  - id: jl.output.zero_index
+    skill: julia/sharp-edges
+    topic: indexing
+    prompt: >
+      What does this program print?
+    code: |
+      a = [10, 20, 30]
+      println(a[1])
+      println(a[end])
+    choices:
+      - "20\n30"
+      - "10\n30"
+      - "BoundsError"
+    expected_output: "10\n30"
+    wrong_output_reason: >
+      "20\n30" — assumes 0-based indexing as in Python/C.
+      Julia arrays are 1-indexed. a[1] is the first element.
+      a[end] is a[length(a)] = a[3] = 30.
+
+  - id: jl.output.array_plus_scalar_error
+    skill: julia/sharp-edges
+    topic: broadcasting
+    prompt: >
+      What does this program print?
+    code: |
+      x = [1, 2, 3]
+      println(x .+ 1)
+      println(x + 1)
+    choices:
+      - "[2, 3, 4]\n[2, 3, 4]"
+      - "[2, 3, 4]\nMethodError"
+      - "MethodError\n[2, 3, 4]"
+    expected_output: "[2, 3, 4]\nMethodError"
+    wrong_output_reason: >
+      "[2, 3, 4]\n[2, 3, 4]" — assumes + is automatically broadcast like NumPy.
+      Julia requires explicit dot syntax for broadcasting. x .+ 1 is [2, 3, 4];
+      x + 1 raises a MethodError because + is not defined for Vector and Int.
+
+  - id: jl.output.integer_overflow
+    skill: julia/sharp-edges
+    topic: integer_overflow
+    prompt: >
+      What does this program print?
+    code: |
+      x = typemax(Int64)
+      println(x + 1)
+      println(typeof(x + 1))
+    choices:
+      - "9223372036854775808\nBigInt"
+      - "OverflowError"
+      - "-9223372036854775808\nInt64"
+    expected_output: "-9223372036854775808\nInt64"
+    wrong_output_reason: >
+      "9223372036854775808\nBigInt" — assumes Julia integers auto-promote like Python.
+      Julia integers have fixed width and overflow silently with wrap-around, like C.
+      typemax(Int64) + 1 wraps to the most negative Int64 value.
+
+  - id: jl.output.multiple_dispatch_all_args
+    skill: julia/semantics
+    topic: multiple_dispatch
+    prompt: >
+      What does this program print?
+    code: |
+      f(x::Int, y::Int) = "both Int"
+      f(x::Int, y::Float64) = "Int and Float64"
+      f(x, y) = "fallback"
+
+      println(f(1, 2))
+      println(f(1, 2.0))
+      println(f("a", 1))
+    choices:
+      - "both Int\nfallback\nfallback"
+      - "both Int\nInt and Float64\nfallback"
+      - "both Int\nInt and Float64\nboth Int"
+    expected_output: "both Int\nInt and Float64\nfallback"
+    wrong_output_reason: >
+      "both Int\nfallback\nfallback" — assumes dispatch only checks the first argument.
+      Julia dispatches on all argument types simultaneously. f(1, 2.0) matches
+      f(x::Int, y::Float64) exactly, not the fallback.
+
+  - id: jl.output.immutable_struct_copy
+    skill: julia/semantics
+    topic: value_semantics
+    prompt: >
+      What does this program print?
+    code: |
+      struct Point
+          x::Float64
+          y::Float64
+      end
+
+      p1 = Point(1.0, 2.0)
+      p2 = p1
+      println(p1 === p2)
+      println(p1 == p2)
+    choices:
+      - "false\ntrue"
+      - "true\ntrue"
+      - "false\nfalse"
+    expected_output: "true\ntrue"
+    wrong_output_reason: >
+      "false\ntrue" — assumes structs are always reference types like Python objects.
+      Immutable structs in Julia have value semantics. p2 = p1 makes a copy with
+      identical bits. === on immutables checks bit-identity, so p1 === p2 is true.
+
+  - id: jl.output.mutable_struct_alias
+    skill: julia/semantics
+    topic: value_semantics
+    prompt: >
+      What does this program print?
+    code: |
+      mutable struct Box
+          value::Int
+      end
+
+      b1 = Box(1)
+      b2 = b1
+      b2.value = 99
+      println(b1.value)
+    choices:
+      - "1"
+      - "99"
+      - "MethodError"
+    expected_output: "99"
+    wrong_output_reason: >
+      "1" — assumes mutable struct assignment copies like immutable struct assignment.
+      mutable struct values are heap-allocated references. b2 = b1 makes both names
+      point to the same Box. Mutating b2.value also changes b1.value.
+
+  - id: jl.output.array_passed_by_reference
+    skill: julia/sharp-edges
+    topic: copy_semantics
+    prompt: >
+      What does this program print?
+    code: |
+      function zero_first!(v)
+          v[1] = 0
+      end
+
+      a = [10, 20, 30]
+      zero_first!(a)
+      println(a)
+    choices:
+      - "[10, 20, 30]"
+      - "[0, 20, 30]"
+      - "BoundsError"
+    expected_output: "[0, 20, 30]"
+    wrong_output_reason: >
+      "[10, 20, 30]" — assumes arrays are copied on function call.
+      Julia passes arrays by reference. The function mutates the caller's array.
+
+  - id: jl.output.soft_scope_script
+    skill: julia/sharp-edges
+    topic: scoping
+    prompt: >
+      This code runs as a script (not in the REPL). What does it print?
+    code: |
+      s = 0
+      for i in 1:5
+          s += i
+      end
+      println(s)
+    choices:
+      - "15"
+      - "0"
+      - "ERROR: UndefVarError: s not defined"
+    expected_output: "0"
+    wrong_output_reason: >
+      "15" — assumes the for-loop body can write to the outer s as in the REPL.
+      In a script, a for-loop creates soft scope. Assignment to s inside the loop
+      creates a new local s rather than updating the outer one, which is not modified.
+      The outer s remains 0. (Julia 1.6+ emits a warning about this.)
+
+  - id: jl.output.missing_propagates
+    skill: julia/semantics
+    topic: missing_nothing
+    prompt: >
+      What does this program print?
+    code: |
+      println(1 + missing)
+      println(missing == missing)
+      println(ismissing(missing))
+    choices:
+      - "1\ntrue\ntrue"
+      - "missing\nmissing\ntrue"
+      - "MethodError\nfalse\ntrue"
+    expected_output: "missing\nmissing\ntrue"
+    wrong_output_reason: >
+      "1\ntrue\ntrue" — assumes missing behaves like None (raises or is ignored).
+      Julia's missing propagates through arithmetic and comparisons (like SQL NULL).
+      missing == missing returns missing, not true; use ismissing() to test.
+
+  - id: jl.output.nan_equality
+    skill: julia/sharp-edges
+    topic: nan_semantics
+    prompt: >
+      What does this program print?
+    code: |
+      x = NaN
+      println(x == x)
+      println(x === x)
+      println(isequal(x, x))
+    choices:
+      - "true\ntrue\ntrue"
+      - "false\nfalse\nfalse"
+      - "false\ntrue\ntrue"
+    expected_output: "false\ntrue\ntrue"
+    wrong_output_reason: >
+      "true\ntrue\ntrue" — assumes all equality tests are equivalent.
+      == follows IEEE 754: NaN == NaN is false. === tests bit-identity: NaN === NaN
+      is true because it is the same bit pattern. isequal is defined to return true
+      for NaN so it can be used as a hash-consistent equality.
+
+  - id: jl.output.closure_loop_late_binding
+    skill: julia/semantics
+    topic: closures
+    prompt: >
+      What does this program print?
+    code: |
+      funcs = Function[]
+      for i in 1:3
+          push!(funcs, () -> i)
+      end
+      println(funcs[1]())
+      println(funcs[2]())
+    choices:
+      - "1\n2"
+      - "3\n3"
+      - "BoundsError"
+    expected_output: "3\n3"
+    wrong_output_reason: >
+      "1\n2" — assumes closures capture the value of i at the time the lambda is created.
+      Julia closures capture variables by reference. All three closures share the same i,
+      whose value is 3 after the loop ends.
+
+  - id: jl.output.column_major_iteration
+    skill: julia/sharp-edges
+    topic: array_layout
+    prompt: >
+      What does this program print?
+    code: |
+      A = [1 2; 3 4]
+      for x in A
+          print(x, " ")
+      end
+    choices:
+      - "1 2 3 4 "
+      - "1 3 2 4 "
+      - "BoundsError"
+    expected_output: "1 3 2 4 "
+    wrong_output_reason: >
+      "1 2 3 4 " — assumes row-major iteration as in NumPy/C.
+      Julia matrices are stored column-major. Iterating a matrix with `for x in A`
+      traverses in storage order: column 1 (1, 3) then column 2 (2, 4).

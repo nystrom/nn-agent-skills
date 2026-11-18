@@ -1,0 +1,368 @@
+# Evals for Python edge cases — adversarial output prediction
+#
+# Same design as prohibited_analogy_cases.yaml: show code, ask what it outputs.
+# No other language is named. Each case targets a specific Python behavior
+# that is either non-obvious or actively surprising.
+#
+# Topics:
+#   - list-multiplication shallow copy
+#   - except-clause variable deletion
+#   - bool as int subtype
+#   - or/and return values (not booleans)
+#   - for-loop variable leaks; comprehension variable does not
+#   - walrus operator leaks from comprehension
+#   - tuple += list paradox (TypeError but still mutates)
+#   - float arithmetic
+#   - None vs False truthiness
+#   - super() cooperative dispatch
+#   - generator exhaustion across two consumers
+#   - nonlocal required for augmented assignment in enclosing scope
+#   - class attribute shared across instances
+#   - except-else semantics
+#   - dict key error vs get
+#
+# Skills exercised: python-semantics, python-sharp-edges, python-types
+
+cases:
+
+  - id: py.edge.list_multiply_shallow
+    skill: python-sharp-edges
+    topic: list_multiplication
+    prompt: >
+      What does this program print?
+    code: |
+      matrix = [[0] * 3] * 3
+      matrix[0][0] = 1
+      print(matrix)
+    choices:
+      - "[[1, 0, 0], [0, 0, 0], [0, 0, 0]]"
+      - "[[1, 0, 0], [1, 0, 0], [1, 0, 0]]"
+      - "[[0, 0, 0], [0, 0, 0], [0, 0, 0]]"
+    expected_output: "[[1, 0, 0], [1, 0, 0], [1, 0, 0]]"
+    wrong_output_reason: >
+      "[[1, 0, 0], [0, 0, 0], [0, 0, 0]]" — assumes * 3 creates three independent rows.
+      List multiplication creates a list of references to the same inner list object,
+      so mutating any row mutates all three.
+
+  - id: py.edge.except_variable_deleted
+    skill: python-sharp-edges
+    topic: exception_handling
+    prompt: >
+      What does this program print?
+    code: |
+      e = "before"
+      try:
+          raise ValueError("oops")
+      except ValueError as e:
+          pass
+      print(e)
+    choices:
+      - "before"
+      - "oops"
+      - "NameError"
+    expected_output: "NameError: name 'e' is not defined"
+    wrong_output_reason: >
+      "before" — assumes the outer binding of e survives the except block.
+      Python deletes the name bound by "as e" at the end of the except block
+      to break reference cycles. The outer e is also gone.
+
+  - id: py.edge.bool_is_int
+    skill: python-semantics
+    topic: bool_subtype
+    prompt: >
+      What does this program print?
+    code: |
+      print(True + True + False)
+      print(True * 7)
+      print(isinstance(True, int))
+    choices:
+      - "2\n7\nFalse"
+      - "True\nTrue\nTrue"
+      - "2\n7\nTrue"
+      - "TypeError"
+    expected_output: "2\n7\nTrue"
+    wrong_output_reason: >
+      "TypeError" or "True\nTrue\nTrue" — assumes bool and int are unrelated types.
+      bool is a subclass of int; True == 1 and False == 0 arithmetically.
+
+  - id: py.edge.or_returns_operand
+    skill: python-semantics
+    topic: boolean_operators
+    prompt: >
+      What does this program print?
+    code: |
+      x = [] or "fallback"
+      y = [1, 2] or "fallback"
+      z = 0 or 0.0 or "" or None or "found"
+      print(x)
+      print(y)
+      print(z)
+    choices:
+      - "False\nTrue\nTrue"
+      - "fallback\n[1, 2]\nfound"
+      - "fallback\nfallback\nfound"
+      - "True\nTrue\nTrue"
+    expected_output: "fallback\n[1, 2]\nfound"
+    wrong_output_reason: >
+      "False\nTrue\nTrue" — assumes or/and always return bool.
+      Python's or returns the first truthy operand, or the last operand if all
+      are falsy. and returns the first falsy operand, or the last if all are truthy.
+      Neither coerces to bool.
+
+  - id: py.edge.for_loop_leaks_comprehension_does_not
+    skill: python-semantics
+    topic: scoping
+    prompt: >
+      What does this program print?
+    code: |
+      i = 99
+      for i in range(3):
+          pass
+      print(i)
+
+      j = 99
+      result = [j for j in range(3)]
+      print(j)
+    choices:
+      - "2\n2"
+      - "2\n99"
+      - "99\n99"
+      - "2\nNameError"
+    expected_output: "2\n99"
+    wrong_output_reason: >
+      "2\n2" — assumes for-loops and comprehensions have the same scoping.
+      A for-loop iteration variable leaks into the enclosing scope; a list
+      comprehension's iteration variable does not (Python 3).
+
+  - id: py.edge.walrus_leaks_from_comprehension
+    skill: python-semantics
+    topic: walrus_operator
+    prompt: >
+      What does this program print?
+    code: |
+      n = 0
+      results = [n := x * 2 for x in range(5)]
+      print(n)
+    choices:
+      - "0"
+      - "NameError"
+      - "8"
+      - "4"
+    expected_output: "8"
+    wrong_output_reason: >
+      "0" — assumes := inside a comprehension is scoped to the comprehension.
+      Unlike the iteration variable, := (walrus) deliberately leaks into the
+      enclosing scope. n is 8 after the comprehension (last assigned value: 4*2).
+
+  - id: py.edge.tuple_iadd_paradox
+    skill: python-sharp-edges
+    topic: augmented_assignment
+    prompt: >
+      What happens when this runs? Does t change?
+    code: |
+      t = ([1, 2],)
+      try:
+          t[0] += [3]
+      except TypeError:
+          pass
+      print(t)
+    choices:
+      - "([1, 2],) — unchanged, because the TypeError prevented any mutation"
+      - "([1, 2, 3],) — the list was mutated despite the TypeError"
+      - "TypeError propagates and print never runs"
+    expected_output: "([1, 2, 3],)"
+    wrong_output_reason: >
+      "([1, 2],)" — assumes TypeError means nothing happened.
+      t[0] += [3] desugars to t[0] = t[0].__iadd__([3]). The iadd mutates
+      the list in place first (succeeding), then the assignment to t[0] raises
+      TypeError because tuples are immutable. The mutation already occurred.
+
+  - id: py.edge.float_equality
+    skill: python-sharp-edges
+    topic: float_arithmetic
+    prompt: >
+      What does this program print?
+    code: |
+      print(0.1 + 0.2 == 0.3)
+      print(0.1 + 0.2)
+    choices:
+      - "True\n0.3"
+      - "False\n0.30000000000000004"
+      - "False\n0.3"
+    expected_output: "False\n0.30000000000000004"
+    wrong_output_reason: >
+      "True\n0.3" — assumes decimal arithmetic or that Python rounds floats.
+      Floating-point arithmetic follows IEEE 754; 0.1 and 0.2 are not exactly
+      representable, so their sum does not exactly equal the representation of 0.3.
+
+  - id: py.edge.none_vs_false_truthiness
+    skill: python-semantics
+    topic: truthiness
+    prompt: >
+      What does this program print?
+    code: |
+      print(None == False)
+      print(not None)
+      print(None is False)
+      print(bool(None))
+    choices:
+      - "True\nTrue\nTrue\nFalse"
+      - "False\nTrue\nFalse\nFalse"
+      - "True\nTrue\nFalse\nFalse"
+    expected_output: "False\nTrue\nFalse\nFalse"
+    wrong_output_reason: >
+      "True\nTrue\nTrue\nFalse" — assumes None and False are equal because both are
+      falsy. Truthiness (bool(None) == False) does not imply equality (None != False).
+      None is its own singleton; None == False is False.
+
+  - id: py.edge.nonlocal_required_for_augmented_assign
+    skill: python-semantics
+    topic: scoping
+    prompt: >
+      What does this program print?
+    code: |
+      def counter():
+          n = 0
+          def increment():
+              n += 1
+          increment()
+          return n
+
+      print(counter())
+    choices:
+      - "1"
+      - "0"
+      - "UnboundLocalError"
+    expected_output: "UnboundLocalError"
+    wrong_output_reason: >
+      "1" — assumes n += 1 in increment reads and updates the enclosing n.
+      Python treats n as local to increment because of the assignment.
+      Without nonlocal n, reading n before the assignment raises UnboundLocalError.
+
+  - id: py.edge.class_attribute_shared
+    skill: python-sharp-edges
+    topic: class_vs_instance_attributes
+    prompt: >
+      What does this program print?
+    code: |
+      class Dog:
+          tricks = []
+
+          def learn(self, trick):
+              self.tricks.append(trick)
+
+      fido = Dog()
+      rex = Dog()
+      fido.learn("roll over")
+      print(rex.tricks)
+    choices:
+      - "[]"
+      - "['roll over']"
+      - "AttributeError"
+    expected_output: "['roll over']"
+    wrong_output_reason: >
+      "[]" — assumes each instance has its own tricks list.
+      tricks is a class attribute; all instances share the same list.
+      fido.tricks.append(...) mutates it in place rather than rebinding,
+      so rex.tricks sees the change.
+
+  - id: py.edge.try_else_only_on_no_exception
+    skill: python-semantics
+    topic: exception_semantics
+    prompt: >
+      What does this program print?
+    code: |
+      for val in [2, 0, 1]:
+          try:
+              result = 10 // val
+          except ZeroDivisionError:
+              print("caught")
+          else:
+              print(result)
+    choices:
+      - "5\ncaught\n10"
+      - "5\ncaught"
+      - "caught\n5\n10"
+      - "5\ncaught\n10"
+    expected_output: "5\ncaught\n10"
+    wrong_output_reason: >
+      "5\ncaught" — assumes the else branch is unreachable, like an else on an if.
+      The else clause of a try runs only when no exception was raised.
+      val=2 → result=5 → else prints 5; val=0 → except prints "caught"; val=1 → else prints 10.
+
+  - id: py.edge.generator_shared_state
+    skill: python-semantics
+    topic: generators
+    prompt: >
+      What does this program print?
+    code: |
+      g = (x for x in range(6))
+      evens = [v for v in g if v % 2 == 0]
+      odds  = [v for v in g if v % 2 != 0]
+      print(evens)
+      print(odds)
+    choices:
+      - "[0, 2, 4]\n[1, 3, 5]"
+      - "[0, 2, 4]\n[]"
+      - "[0, 2, 4]\n[5]"
+    expected_output: "[0, 2, 4]\n[]"
+    wrong_output_reason: >
+      "[0, 2, 4]\n[1, 3, 5]" — assumes each list comprehension iterates g independently.
+      g is a single generator object; iterating it to build evens exhausts it.
+      The second comprehension gets an already-exhausted generator, producing [].
+
+  - id: py.edge.super_follows_mro
+    skill: python-semantics
+    topic: mro
+    prompt: >
+      What does this program print?
+    code: |
+      class A:
+          def greet(self):
+              print("A")
+              super().greet()
+
+      class B:
+          def greet(self):
+              print("B")
+
+      class C(A, B):
+          pass
+
+      C().greet()
+    choices:
+      - "A"
+      - "A\nB"
+      - "B\nA"
+      - "AttributeError: 'super' object has no attribute 'greet'"
+    expected_output: "A\nB"
+    wrong_output_reason: >
+      "A" — assumes super() in A always calls object, so greet() stops after A prints.
+      super() follows the MRO of the actual instance (C), not just A's parent.
+      C.__mro__ is [C, A, B, object], so A's super().greet() dispatches to B.greet().
+
+  - id: py.edge.string_concatenation_in_loop
+    skill: python-sharp-edges
+    topic: string_immutability
+    prompt: >
+      These two functions produce the same final string. Do they have the same performance
+      characteristics?
+    code: |
+      def build_a(parts):
+          result = ""
+          for p in parts:
+              result += p
+          return result
+
+      def build_b(parts):
+          return "".join(parts)
+    choices:
+      - "yes — strings are immutable so both copy on every iteration"
+      - "no — build_a is O(n²) in the total character count; build_b is O(n)"
+      - "no — build_b is slower because join has overhead"
+    expected_output: "no — build_a is O(n²) in the total character count; build_b is O(n)"
+    wrong_output_reason: >
+      "yes" — assumes += on strings behaves like list.append in CPython.
+      CPython does optimize some cases of str += but the language specification
+      does not guarantee it; in general, repeated concatenation creates a new
+      string each time (O(n) per iteration → O(n²) total). str.join allocates once.

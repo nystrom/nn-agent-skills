@@ -1,0 +1,176 @@
+# Evals for abstention behavior
+# Tests that an agent correctly abstains or qualifies when the answer depends on
+# runtime state, whole-program analysis, implementation details, or unspecified behavior.
+#
+# A correct abstention response names the uncertainty rather than guessing.
+#
+# Skills exercised: python-semantics, python-sharp-edges, python-types
+
+cases:
+
+  - id: py.abstain.del_timing
+    skill: python-semantics
+    topic: object_lifecycle
+    prompt: >
+      When exactly will `__del__` be called for the object created in `f()`?
+    code: |
+      class Resource:
+          def __del__(self):
+              release()
+
+      def f():
+          r = Resource()
+    expected_behavior:
+      must_not_say:
+        - "immediately when f returns"
+        - "deterministically"
+        - "always before the next statement"
+      must_say_one_of:
+        - "timing is not guaranteed"
+        - "CPython: when reference count drops to zero"
+        - "other implementations may differ"
+        - "use a context manager for deterministic cleanup"
+
+  - id: py.abstain.mro_without_chain
+    skill: python-semantics
+    topic: mro
+    prompt: >
+      What is the MRO of `D`?
+    code: |
+      class D(B, C): pass
+    expected_behavior:
+      must_not_say:
+        - "D, B, C, object"
+        - "D, B, A, C, object"
+      must_say_one_of:
+        - "cannot determine without the full inheritance chain"
+        - "depends on B and C's bases"
+        - "need to know B.__mro__ and C.__mro__"
+        - "inspect D.__mro__ at runtime"
+
+  - id: py.abstain.hash_custom_eq
+    skill: python-semantics
+    topic: dunder_methods
+    prompt: >
+      Is an instance of `Point` usable as a dict key?
+    code: |
+      class Point:
+          def __init__(self, x, y):
+              self.x = x
+              self.y = y
+          def __eq__(self, other):
+              return self.x == other.x and self.y == other.y
+    expected_behavior:
+      must_not_say:
+        - "yes, it is hashable"
+        - "works as a dict key"
+      must_say_one_of:
+        - "unhashable"
+        - "__eq__ was defined without __hash__"
+        - "Python sets __hash__ = None when __eq__ is defined"
+        - "TypeError: unhashable type"
+
+  - id: py.abstain.generator_exhaustion
+    skill: python-semantics
+    topic: generators
+    prompt: >
+      How many items will the second call to `list(g)` return?
+    code: |
+      g = (x for x in range(5))
+      first = list(g)
+      second = list(g)
+    expected_behavior:
+      must_not_say:
+        - "5 items"
+        - "same as the first call"
+      must_say_one_of:
+        - "empty list"
+        - "generator is exhausted after first iteration"
+        - "generators are single-pass"
+        - "0 items"
+
+  - id: py.abstain.string_interning
+    skill: python-sharp-edges
+    topic: string_interning
+    prompt: >
+      Will `a is b` always return `True` for two string literals with the same value?
+    code: |
+      a = "hello"
+      b = "hello"
+      print(a is b)
+    expected_behavior:
+      must_not_say:
+        - "always True"
+        - "guaranteed to be True"
+        - "True in all implementations"
+      must_say_one_of:
+        - "implementation detail"
+        - "CPython interns certain strings"
+        - "not guaranteed by the language spec"
+        - "use == to test equality"
+
+  - id: py.abstain.class_attribute_shadowing
+    skill: python-semantics
+    topic: attribute_lookup
+    prompt: >
+      Does `obj.count` refer to the class attribute or an instance attribute here?
+    code: |
+      class Counter:
+          count = 0
+
+      obj = Counter()
+      # ... (rest of program not shown)
+      print(obj.count)
+    expected_behavior:
+      must_not_say:
+        - "always the class attribute"
+        - "always 0"
+      must_say_one_of:
+        - "depends on whether count was set on the instance"
+        - "cannot determine without knowing if obj.count was assigned"
+        - "requires whole-program analysis"
+        - "instance attribute would shadow class attribute"
+
+  - id: py.abstain.global_name_mutation
+    skill: python-semantics
+    topic: scoping
+    prompt: >
+      What value does `x` have when `g()` is called?
+    code: |
+      x = 1
+
+      def f():
+          global x
+          x = 2
+
+      def g():
+          print(x)
+    expected_behavior:
+      must_not_say:
+        - "always 1"
+        - "always 2"
+      must_say_one_of:
+        - "depends on whether f() was called before g()"
+        - "1 if f() was not called, 2 if f() was called"
+        - "requires knowing call order"
+
+  - id: py.abstain.mypy_pyright_agreement
+    skill: python-types
+    topic: type_checker_behavior
+    prompt: >
+      Will this code pass type checking?
+    code: |
+      from typing import overload
+
+      @overload
+      def process(x: int) -> int: ...
+      @overload
+      def process(x: str) -> str: ...
+      def process(x):
+          return x
+    expected_behavior:
+      must_say_one_of:
+        - "depends on the type checker"
+        - "mypy and pyright may behave differently"
+        - "the implementation signature lacks annotations"
+        - "some checkers require the implementation signature to be annotated"

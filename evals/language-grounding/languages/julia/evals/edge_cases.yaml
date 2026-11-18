@@ -1,0 +1,300 @@
+# Evals for Julia edge cases — adversarial output prediction
+#
+# Topics:
+#   - method ambiguity is silent until called
+#   - string indexing is by byte, not character
+#   - 0.0 == -0.0 but isequal(0.0, -0.0) is false
+#   - broadcasting a vector with a row matrix produces a matrix
+#   - let captures loop variable by value
+#   - mutable struct field mutation through alias
+#   - tuple multiple return
+#   - Vector{Int} is not a subtype of Vector{Number}
+#   - nothing vs missing in arithmetic
+#   - @time on first call includes compilation
+#   - type annotation does not restrict assignment to Union types
+#   - abstract type cannot be instantiated
+#   - integer division: div truncates, ÷ truncates, fld floors
+#
+# Skills exercised: julia/semantics, julia/sharp-edges, julia/types
+
+cases:
+
+  - id: jl.edge.method_ambiguity_silent
+    skill: julia/sharp-edges
+    topic: dispatch
+    prompt: >
+      What happens when this program runs?
+    code: |
+      f(x::Int, y) = "first"
+      f(x, y::Int) = "second"
+      println(f(1, "a"))
+      println(f("a", 1))
+      println(f(1, 1))
+    choices:
+      - "first\nsecond\nMethodError on third call"
+      - "first\nsecond\nfirst"
+      - "MethodError on line 2 at definition"
+    expected_output: "first\nsecond\nMethodError on third call"
+    wrong_output_reason: >
+      "MethodError on line 2 at definition" — assumes ambiguous method definitions
+      are caught at definition time. Julia only errors when an ambiguous call is made.
+      f(1, "a") and f("a", 1) are unambiguous; f(1, 1) matches both methods equally
+      and raises MethodError at call time.
+
+  - id: jl.edge.string_byte_indexing
+    skill: julia/sharp-edges
+    topic: string_indexing
+    prompt: >
+      What does this program print?
+    code: |
+      s = "café"
+      println(length(s))
+      println(ncodeunits(s))
+      println(s[1])
+    choices:
+      - "4\n4\n'c'"
+      - "5\n5\n'c'"
+      - "4\n5\n'c'"
+      - "StringIndexError"
+    expected_output: "4\n5\n'c'"
+    wrong_output_reason: >
+      "4\n4\n'c'" — assumes length and ncodeunits are the same.
+      Julia strings are UTF-8. 'é' is a 2-byte sequence, so ncodeunits("café") == 5
+      even though the string has 4 characters. length() counts Unicode characters.
+      s[1] is safe ('c' is at byte 1).
+
+  - id: jl.edge.neg_zero_equality
+    skill: julia/sharp-edges
+    topic: float_semantics
+    prompt: >
+      What does this program print?
+    code: |
+      println(0.0 == -0.0)
+      println(0.0 === -0.0)
+      println(isequal(0.0, -0.0))
+    choices:
+      - "true\ntrue\ntrue"
+      - "true\nfalse\nfalse"
+      - "false\nfalse\nfalse"
+    expected_output: "true\nfalse\nfalse"
+    wrong_output_reason: >
+      "true\ntrue\ntrue" — assumes all three tests agree.
+      IEEE 754: 0.0 == -0.0 is true. === tests bit-identity: the bit patterns differ,
+      so false. isequal is designed for use in hash tables; it treats -0.0 and 0.0
+      as distinct (unlike ==) to maintain hash consistency.
+
+  - id: jl.edge.broadcast_vector_row_matrix
+    skill: julia/semantics
+    topic: broadcasting
+    prompt: >
+      What is the shape of the result?
+    code: |
+      a = [1, 2, 3]      # 3-element Vector (shape (3,))
+      b = [10 20 30]      # 1×3 Matrix (shape (1,3))
+      c = a .+ b
+      println(size(c))
+    choices:
+      - "(3,)"
+      - "(1, 3)"
+      - "(3, 3)"
+      - "DimensionMismatch error"
+    expected_output: "(3, 3)"
+    wrong_output_reason: >
+      "(3,)" or "DimensionMismatch error" — assumes a 1D vector and a 1×3 matrix
+      either broadcast to a vector or fail. Julia broadcasts a (3,) vector with a
+      (1,3) matrix by treating the vector as a (3,1) column, producing a 3×3 matrix.
+
+  - id: jl.edge.let_captures_by_value
+    skill: julia/semantics
+    topic: closures
+    prompt: >
+      What does this program print?
+    code: |
+      funcs = Function[]
+      for i in 1:3
+          let i = i
+              push!(funcs, () -> i)
+          end
+      end
+      println(funcs[1]())
+      println(funcs[3]())
+    choices:
+      - "3\n3"
+      - "1\n3"
+      - "1\n1"
+    expected_output: "1\n3"
+    wrong_output_reason: >
+      "3\n3" — applies the late-binding rule without recognising the let fix.
+      let i = i creates a new binding in each iteration that captures the current
+      value of i. Each closure gets its own independent i, so funcs[1]() is 1
+      and funcs[3]() is 3.
+
+  - id: jl.edge.multiple_return_is_tuple
+    skill: julia/semantics
+    topic: multiple_return
+    prompt: >
+      What does this program print?
+    code: |
+      function split_sign(x)
+          return x < 0 ? (-1, -x) : (1, x)
+      end
+
+      result = split_sign(-5)
+      println(typeof(result))
+      println(result[1])
+    choices:
+      - "Pair{Int,Int}\n-1"
+      - "Tuple{Int64, Int64}\n-1"
+      - "Array{Int64}\n-1"
+    expected_output: "Tuple{Int64, Int64}\n-1"
+    wrong_output_reason: >
+      "Pair{Int,Int}" or "Array{Int64}" — assumes multiple return values use a special
+      type. Julia multiple return values are just Tuple literals. result is a
+      Tuple{Int64, Int64} and is indexed with 1-based integer indexing.
+
+  - id: jl.edge.vector_int_not_subtype_vector_number
+    skill: julia/types
+    topic: type_invariance
+    prompt: >
+      What does this program print?
+    code: |
+      println(Int <: Number)
+      println(Vector{Int} <: Vector{Number})
+      println(Vector{Int} <: Vector{<:Number})
+    choices:
+      - "true\ntrue\ntrue"
+      - "true\nfalse\ntrue"
+      - "true\nfalse\nfalse"
+    expected_output: "true\nfalse\ntrue"
+    wrong_output_reason: >
+      "true\ntrue\ntrue" — assumes type parameters are covariant.
+      Julia parametric types are invariant: Vector{Int} is not a subtype of
+      Vector{Number} even though Int <: Number. The wildcard Vector{<:Number}
+      means "Vector of any subtype of Number", which does include Vector{Int}.
+
+  - id: jl.edge.nothing_errors_missing_propagates
+    skill: julia/semantics
+    topic: missing_nothing
+    prompt: >
+      What does this program print?
+    code: |
+      x = missing
+      y = nothing
+
+      println(x + 1)
+      try
+          println(y + 1)
+      catch e
+          println(typeof(e))
+      end
+    choices:
+      - "missing\nmissing"
+      - "missing\nMethodError"
+      - "MethodError\nmissing"
+    expected_output: "missing\nMethodError"
+    wrong_output_reason: >
+      "missing\nmissing" — assumes nothing propagates like missing.
+      missing propagates through arithmetic (like SQL NULL). nothing has no arithmetic
+      methods defined; adding 1 to nothing raises MethodError.
+
+  - id: jl.edge.div_vs_fld
+    skill: julia/semantics
+    topic: integer_division
+    prompt: >
+      What does this program print?
+    code: |
+      println(div(-7, 2))
+      println(fld(-7, 2))
+      println(-7 ÷ 2)
+    choices:
+      - "-3\n-4\n-3"
+      - "-4\n-4\n-4"
+      - "-3\n-3\n-3"
+    expected_output: "-3\n-4\n-3"
+    wrong_output_reason: >
+      "-4\n-4\n-4" — assumes all integer division truncates toward -inf.
+      In Julia, div() and ÷ truncate toward zero (like C), so -7 ÷ 2 == -3.
+      fld() floors toward -inf, so fld(-7, 2) == -4.
+      This is the opposite of Python, where // always floors.
+
+  - id: jl.edge.abstract_type_not_instantiable
+    skill: julia/types
+    topic: type_hierarchy
+    prompt: >
+      What does this program print?
+    code: |
+      abstract type Animal end
+
+      struct Dog <: Animal
+          name::String
+      end
+
+      println(Dog("Rex") isa Animal)
+      try
+          Animal()
+      catch e
+          println(typeof(e))
+      end
+    choices:
+      - "true\nMethodError"
+      - "false\nMethodError"
+      - "true\nAnimal()"
+    expected_output: "true\nMethodError"
+    wrong_output_reason: >
+      "true\nAnimal()" — assumes abstract types can be instantiated like abstract
+      base classes in Python. Julia abstract types cannot be instantiated; calling
+      Animal() raises MethodError because no constructor is defined for an abstract type.
+
+  - id: jl.edge.array_copy_vs_assign
+    skill: julia/sharp-edges
+    topic: copy_semantics
+    prompt: >
+      What does this program print?
+    code: |
+      a = [1, 2, 3]
+      b = a
+      c = copy(a)
+
+      b[1] = 99
+      c[2] = 88
+
+      println(a)
+    choices:
+      - "[1, 2, 3]"
+      - "[99, 2, 3]"
+      - "[99, 88, 3]"
+      - "[1, 88, 3]"
+    expected_output: "[99, 2, 3]"
+    wrong_output_reason: >
+      "[1, 2, 3]" — assumes array assignment copies. b = a makes b an alias to the
+      same array; b[1] = 99 mutates a. c = copy(a) makes an independent shallow copy;
+      c[2] = 88 does not affect a. Result: a is [99, 2, 3].
+
+  - id: jl.edge.global_type_instability
+    skill: julia/sharp-edges
+    topic: type_stability
+    prompt: >
+      Which function is type-stable and why?
+    code: |
+      threshold = 0.5
+
+      function classify_a(x)
+          return x > threshold
+      end
+
+      function classify_b(x, t=0.5)
+          return x > t
+      end
+    choices:
+      - "both are type-stable"
+      - "classify_a is stable; classify_b is not"
+      - "classify_b is stable; classify_a is not"
+      - "neither is type-stable"
+    expected_output: "classify_b is stable; classify_a is not"
+    wrong_output_reason: >
+      "both are type-stable" — assumes the compiler infers the global's type.
+      Non-const globals are always type-unstable: the compiler cannot know their
+      type at specialization time. classify_a reads threshold, a non-const global,
+      so its return type cannot be inferred. classify_b takes t as a local argument
+      with a concrete default; the compiler knows t::Float64 and x::Float64,
+      so the return type is Bool.
