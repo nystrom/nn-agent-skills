@@ -153,6 +153,20 @@ are characterization tests, written to a separate `*.generated` test file; an
 optional review pass on a stronger model judges whether each pinned behavior is
 correct.
 
+### duplicate-function-unifier
+
+Finds functions, in any programming language, whose bodies are identical once
+comments and whitespace are removed, and proposes keeping one copy. A script
+with no dependencies groups the duplicates and reports where a shared function
+can live, who calls each name (text search, and other repos with
+`gh search code`), and nearby layering docs. The model then reads the code,
+and uses language server references when available, to confirm each finding and
+to look for duplicates the script cannot see. It refuses groups that look deliberate, have
+no allowed home, or have an unknown consumer. It reports findings, each with a
+proposed change and the check that verifies it, and never edits files. It is
+also a review lens: it follows the shared lens protocol, scopes candidates to a
+diff, a path set, or the whole repo, and can return the lens wire format.
+
 ### Language grounding skills
 
 One skill per language: `python-grounding`, `julia-grounding`,
@@ -214,7 +228,7 @@ Invoke the skills as `$run-review-lenses`, `$adversarial-review`,
 `$dead-code-code-review`, `$ai-slop-code-review`, `$numerical-code-review`,
 `$codex-code-review` (which skips itself inside Codex),
 `$interactive-code-review`,
-`$ui-code-review`, `$concolic-test-generation`, the `$<lang>-grounding` skills,
+`$ui-code-review`, `$concolic-test-generation`, `$duplicate-function-unifier`, the `$<lang>-grounding` skills,
 or describe a matching task
 and let Codex select the skill.
 
