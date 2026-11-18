@@ -114,6 +114,10 @@ plus untracked files. A diff with no candidate test file is clean. Candidate
 files with no recognized case exit 2, because the language row may not fit
 them.
 
+The lens returns the one-line headline (`needs-attention` or `approve`) with
+every structured list. The shared protocol requires it in its structured
+output section, so the lens keeps it.
+
 ## Refusals
 
 | Refusal | Check | Reason |
@@ -128,13 +132,15 @@ A snapshot-backed case gets no B finding, even when it also holds a tautology.
 
 ## Mutation evidence
 
-The script collects none. The checks support these readings, and the reviewer
-confirms them:
+The script collects none. The checks suggest these readings. Each holds only
+after the reviewer confirms it by reading:
 
-- B: no mutant of the code under test changes an assertion whose two sides are
-  the same expression.
+- B: for a repeated expression, a mutant of the code under test usually leaves
+  the assertion unchanged. A getter or a non-reflexive equality is the
+  exception.
 - C: the case reaches no repo code, so no mutant is inside its covered range.
-- A: the assertion set is empty, which is what "kills nothing" means.
+- A: the assertion set is empty, so the case kills only mutants that make it
+  throw. A deliberate does-not-throw check is the exception.
 
 A proposed change names a mutation of the code under test that the repaired
 assertion must catch. State no kill rate you did not measure.

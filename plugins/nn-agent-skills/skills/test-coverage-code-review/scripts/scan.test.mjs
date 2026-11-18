@@ -1,4 +1,4 @@
-// Run with: node --test plugins/nn-agent-skills/skills/useless-test-pruner/scripts/
+// Run with: node --test plugins/nn-agent-skills/skills/test-coverage-code-review/scripts/
 //
 // The scan has no dependency, so these tests need no extra package. Each
 // language row marked `verified` in languages.mjs has a fixture below.
@@ -397,13 +397,31 @@ test("scope: the repo test file count ignores --scope", () => {
   assert.equal(doc.scope.repo_test_files, 2);
 });
 
+test("--out through a dangling link exits 2 and creates nothing in the repository", () => {
+  const dir = fixtureRepo();
+  const outside = tempDir();
+  symlinkSync(join(dir, "created.json"), join(outside, "dangling.json"));
+  const r = run(dir, ["--out", join(outside, "dangling.json")]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /symbolic link/);
+  assert.equal(spawnSync("ls", [join(dir, "created.json")]).status !== 0, true);
+});
+
+test("an exempt file with a constant assertion is refused, not dropped", () => {
+  const dir = tempDir();
+  write(dir, { "a_test.go": "package a\nfunc TestA(t *testing.T) { assert.True(t, true) }\n" });
+  const doc = JSON.parse(run(dir, ["--exempt", "a_test.go"]).stdout);
+  assert.equal(doc.counts.reported, 0);
+  assert.equal(doc.counts.refused, 1);
+});
+
 test("--out through a link into the repository exits 2", () => {
   const dir = fixtureRepo();
   const outside = tempDir();
   symlinkSync(join(dir, "pkg", "a_test.go"), join(outside, "link.json"));
   const r = run(dir, ["--out", join(outside, "link.json")]);
   assert.equal(r.status, 2);
-  assert.match(r.stderr, /inside the repository/);
+  assert.match(r.stderr, /symbolic link/);
   assert.match(readFileSync(join(dir, "pkg", "a_test.go"), "utf8"), /^package pkg/);
 });
 
@@ -417,7 +435,7 @@ test("wire format: review-lens objects, mapped severities, headline on stdout", 
   assert.ok(list.length > 0);
   for (const f of list) {
     assert.deepEqual(Object.keys(f), ["source", "path", "line", "severity", "title", "body", "suggested_fix", "evidence"]);
-    assert.equal(f.source, "useless-test-pruner");
+    assert.equal(f.source, "test-coverage-code-review");
     assert.ok(["blocker", "high", "medium", "low"].includes(f.severity));
     assert.match(f.body, /origin: script; evidence source: text/);
     assert.match(f.evidence, /^Inferred: text scan/);

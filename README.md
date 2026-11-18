@@ -50,8 +50,17 @@ risk, release readiness. Go/no-go oriented. Standalone or via the fan-out.
 Test-coverage lens: missing or weak tests for new and changed behavior,
 untested failure/edge paths, assertions that would not catch the bug, brittle
 snapshots, skipped or deleted tests without replacement — and useless tests
-(tautologies, duplicates, mock-only, coverage theater) with a prune proposal.
-Behavioral coverage, not a line-percent scolding. Standalone or via the fan-out.
+(no assertion, assertions that hold for any input, cases that reach no repo
+code, tautologies, duplicates, mock-only, coverage theater) with a prune
+proposal. Works for any language. The model does the missing-coverage analysis
+by reading; `scripts/scan.mjs`, a table-driven scanner that needs only Node,
+finds useless-test candidates with whole-tree evidence, and a judgment pass
+confirms each. Symbol facts come from the language server when one exists, and
+from text search and reading otherwise; each finding says which. It refuses
+snapshot-backed, skipped, and helper-asserting cases and counts each refusal.
+Every finding carries a proposed change, and the lens never edits files.
+Reviews a diff or a whole repo. Behavioral coverage, not a line-percent
+scolding. Standalone or via the fan-out.
 
 ### dead-code-code-review
 
@@ -137,22 +146,6 @@ are characterization tests, written to a separate `*.generated` test file; an
 optional review pass on a stronger model judges whether each pinned behavior is
 correct.
 
-### useless-test-pruner
-
-Finds test cases that run and cannot fail, in any language: a case with no
-assertion, an assertion that holds for every input, and a case that asserts
-without reaching any code the repo owns. Symbol facts come from the language
-server when one exists, and from text search and reading otherwise; each
-finding says which. `scripts/scan.mjs` is a table-driven lead generator with no
-dependency beyond Node; adding a language means adding a row. It refuses
-snapshot-backed and skipped cases, and cases that assert through a helper in the
-same file, and counts each refusal.
-Every finding carries a proposed change, and the skill never edits files. It
-reviews a diff or a whole repo, standalone or as a lens under
-`run-review-lenses`; it overlaps the useless-test section of
-`test-coverage-code-review` and adds script-backed whole-tree evidence and
-judgment gates.
-
 ## Install with Claude Code
 
 Add this marketplace, then install the plugin:
@@ -187,7 +180,7 @@ Invoke the skills as `$run-review-lenses`, `$adversarial-review`,
 `$dead-code-code-review`, `$ai-slop-code-review`, `$numerical-code-review`,
 `$codex-code-review` (which skips itself inside Codex),
 `$interactive-code-review`,
-`$ui-code-review`, `$concolic-test-generation`, `$useless-test-pruner`, or describe a matching task
+`$ui-code-review`, `$concolic-test-generation`, or describe a matching task
 and let Codex select the skill.
 
 ## Install with Antigravity

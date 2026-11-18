@@ -15,6 +15,7 @@
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -788,7 +789,9 @@ function scanFile(rel, text, lang, exempt) {
         findings.push({ ...f, severity: t.severity, proposal: t.proposal, refused: false });
       }
     }
-    if (trivial && taut.length === 0 && !exempt.has(rel)) {
+    if (trivial && taut.length === 0 && exempt.has(rel)) {
+      refuse("exempt: the caller passed this file with --exempt", "a constant assertion");
+    } else if (trivial && taut.length === 0) {
       findings.push({
         ...base("B", c.line),
         severity: "high",
@@ -920,7 +923,7 @@ function run(root, opts, languages) {
     refusedByReason[f.reason] = (refusedByReason[f.reason] ?? 0) + 1;
   }
   return {
-    tool: "useless-test-pruner",
+    tool: "test-coverage-code-review",
     root,
     scope: {
       mode: opts.diff !== null ? "diff" : opts.scopes.length > 0 ? "paths" : "repo",
@@ -946,14 +949,17 @@ function run(root, opts, languages) {
   };
 }
 
-const WIRE_SEVERITY = { high: "high", medium: "medium", question: "low", low: "low" };
+// A clearly useless test the change introduces is `medium` in this lens. The
+// reviewer raises one to `high` when it is the only test claiming to cover a
+// core behavior.
+const WIRE_SEVERITY = { high: "medium", medium: "medium", question: "low", low: "low" };
 
 /** The review-lens wire format: one object per reported finding. */
 function toWire(doc) {
   return doc.findings
     .filter((f) => !f.refused)
     .map((f) => ({
-      source: "useless-test-pruner",
+      source: "test-coverage-code-review",
       path: f.file,
       line: f.line,
       severity: WIRE_SEVERITY[f.severity],
@@ -972,7 +978,7 @@ const headline = (doc) =>
 function summary(doc) {
   const lines = [
     `scope: ${doc.scope.mode}${doc.scope.base ? ` against ${doc.scope.base}` : ""}; ${doc.scope.candidate_test_files} of ${doc.scope.repo_test_files} test files are candidates`,
-    `useless-test-pruner: ${doc.counts.test_files} test files, ${doc.counts.cases} cases, ${doc.counts.candidates} candidates, ${doc.counts.refused} refused, ${doc.counts.reported} reported`,
+    `test-coverage-code-review: ${doc.counts.test_files} test files, ${doc.counts.cases} cases, ${doc.counts.candidates} candidates, ${doc.counts.refused} refused, ${doc.counts.reported} reported`,
   ];
   for (const [id, info] of Object.entries(doc.languages)) {
     lines.push(`language ${id}: ${info.files} files, ${info.cases} cases${info.verified ? "" : " (no fixture covers this row)"}`);
@@ -1007,13 +1013,29 @@ function main() {
     while (!existsSync(existing)) {
       existing = dirname(existing);
     }
-    // An existing file at the path may be a link into the repository.
-    const target = existsSync(opts.out)
-      ? realpathSync(opts.out)
-      : join(realpathSync(existing), relative(existing, opts.out));
-    const inside = toRel(realpathSync(root), target);
-    if (!inside.startsWith("..") && !isAbsolute(inside)) {
-      fail(`--out ${opts.out} is inside the repository; name a path outside it`);
+    // A link at the path (even a dangling one) could lead into the repository.
+    let isLink = false;
+    try {
+      isLink = lstatSync(opts.out).isSymbolicLink();
+    } catch {
+      /* no file yet */
+    }
+    if (isLink) {
+      fail(`--out ${opts.out} is a symbolic link; name a regular path outside the repository`);
+    }
+    const target = join(realpathSync(existing), relative(existing, opts.out));
+    const roots = new Set([realpathSync(root)]);
+    try {
+      roots.add(realpathSync(execFileSync("git", ["rev-parse", "--show-toplevel"], {
+        cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim()));
+    } catch {
+      /* not a git checkout */
+    }
+    for (const repo of roots) {
+      const inside = toRel(repo, target);
+      if (!inside.startsWith("..") && !isAbsolute(inside)) {
+        fail(`--out ${opts.out} is inside the repository; name a path outside it`);
+      }
     }
     mkdirSync(dirname(opts.out), { recursive: true });
   }
