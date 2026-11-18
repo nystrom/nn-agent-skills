@@ -1,4 +1,4 @@
-# TypeScript Version Differences: 5.x–7.0
+# TypeScript Version Differences: 5.x–7.1
 
 TypeScript ships a minor release roughly every three months; there is no semver
 "major = breaking" guarantee — minor releases can introduce breaking changes to
@@ -6,7 +6,8 @@ the checker. The headline event of this range is the **7.0 native port**: the
 compiler was rewritten in Go (Project *Corsa*), giving ~10× faster builds while
 keeping type-checking semantics identical. **6.0 is the last release built on the
 JavaScript codebase** and exists mainly to deprecate legacy options that 7.0
-removes.
+removes. As of 2026-11 the current stable release is **7.0.2** (2026-08-20), the
+last 6.x release is **6.0.3**, and **7.1** is in beta (7.1.0-beta, 2026-10-20).
 
 Use this reference to verify whether a construct or compiler option is valid for a
 given target version, and when migrating.
@@ -98,6 +99,37 @@ only speed.
 
 ---
 
+## TypeScript 7.1 — Beta
+
+7.1.0-beta shipped 2026-10-20; a release candidate was expected about a month
+later. Treat every item as subject to change until the stable release.
+
+- **Compiler options:** `--target es2026` and `--lib es2026` are stable. The
+  `lib` additions include `Math.sumPrecise`, `Iterator.concat`, `JSON.rawJSON`,
+  `Error.isError`, `Array.fromAsync`, `Map`/`WeakMap` `getOrInsert` and
+  `getOrInsertComputed`, and the `Uint8Array` base64 and hex methods.
+- **`--lib esnext` additions:** `Promise.allKeyed`, `Promise.allSettledKeyed`,
+  `Iterator.zip`, `Iterator.zipKeyed`, and `Iterator.prototype.chunks`, `join`,
+  `includes`.
+- **Import attributes in ambient modules:** `declare module "*" with { type: "css" }`
+  (also `"text"` and `"bytes"`). A missing attribute is an error.
+- **Source phase imports:** `import source X from "..."` and `import.source("...")`
+  produce an `AbstractModuleSource` (a `WebAssembly.Module` for Wasm). They need
+  `module` set to `esnext`, `nodenext`, or `preserve`, and `esnext` in `lib` or
+  `target`.
+- **Content mappers:** a `contentMappers` array in `tsconfig.json`. Running them
+  requires `tsc --runExternalCode`.
+- **Stricter distributive conditional types:** inside a distributed branch `T` is
+  a narrower type parameter, so a constraint that relied on the old behavior now
+  errors ("Type 'B' does not satisfy the constraint 'A'").
+- **API:** new entry points `typescript/sync`, `typescript/async`, `typescript/fs`,
+  `typescript/ast`, `typescript/ast/is`, `typescript/ast/factory`. `API` and
+  `Program` instances are `Disposable`. `program.emitToString()` returns emit
+  output without writing files.
+- **`lib.d.ts`:** DOM type generation changed and can change type-check results.
+
+---
+
 ## Migration Notes
 
 ### 5.x → 6.0
@@ -116,6 +148,14 @@ only speed.
 - Switch the build to `tsgo`; expect identical type results, far faster runs.
 - Do **not** upgrade internals-dependent tooling (custom transformers, some
   type-aware ESLint plugins) until they support the native API — target 7.1.
+
+### 7.0 → 7.1
+
+- Re-check generic code with distributive conditional types; constraints that
+  relied on the old behavior now error.
+- Re-run type checks after the `lib.d.ts` DOM change.
+- Use `es2026` in `target` or `lib` only after confirming the runtime supports
+  the features you call.
 
 ---
 

@@ -150,9 +150,9 @@ footguns are, so it does not pattern-match one language or version onto another.
 |-------|----------|------------|
 | `python-grounding` | 3.9-3.13 | semantics, types, stdlib, toolchain, versions, errors, sharp-edges, packages |
 | `julia-grounding` | 1.6-1.13 | semantics, types, stdlib, toolchain, versions, errors, sharp-edges, packages |
-| `typescript-grounding` | 5.x-7.0 | semantics, types, sharp-edges, versions, toolchain |
+| `typescript-grounding` | 5.x-7.1 | semantics, types, sharp-edges, versions, toolchain |
 | `javascript-grounding` | | semantics, sharp-edges |
-| `rust-grounding` | | semantics, types, sharp-edges, versions, toolchain, packages |
+| `rust-grounding` | editions 2015-2024, releases to 1.100 | semantics, types, sharp-edges, versions, toolchain, packages |
 | `cpp-grounding` | | semantics, types, sharp-edges, versions, toolchain |
 
 Every reference ends with a "What an agent may/must not infer" section. Each

@@ -1,8 +1,9 @@
 # Julia Version Differences: 1.6–1.13
 
 Julia's LTS (Long Term Support) line is **1.10** (released December 2023) and
-remains the LTS through this range. The latest stable series is **1.12**
-(October 2025); **1.13** is feature-frozen but not yet released as of mid-2026.
+remains the LTS through this range (1.10.13 is current). The latest stable
+series is **1.13** (1.13.0 on 2026-09-10; 1.13.4 on 2026-11-13). **1.14** is in
+beta (1.14.0-beta1, 2026-11-13).
 New packages should target `julia = "1.10"` for LTS support, or `"1.9"`+ for good
 package-extension support; targeting `"1.6"` sacrifices access to many improvements.
 
@@ -281,9 +282,8 @@ forever rather than being open to compiler transformation.
 
 ## Julia 1.13
 
-Feature-frozen but **not yet released** as of mid-2026 (prerelease). Target these
-features only when the deployment is known to run a 1.13 prerelease or later —
-check `VERSION` first.
+Released 2026-09-10. Target these features only when the deployment is known to
+run 1.13 or later — check `VERSION` first.
 
 ### Key Changes
 
@@ -299,6 +299,29 @@ values across Julia versions — they are not stable, and 1.13 changed them.
 `ispositive`/`isnegative` for `Real`, `Iterators.findeach` (a lazy `findall`),
 `Base.@acquire` (non-closure `Semaphore` acquire), and `Sys.sysimage_target()`.
 `fieldindex` is now exported and `Base.donotdelete` is now public.
+
+**`@doc` return value:** `@doc` now returns the documented expression (a
+function or type), not a `Docs.Binding`. Code that relied on the `Docs.Binding`
+result breaks.
+
+**`macroexpand` and `macroexpand!`:** both take a `legacyscope` keyword that
+controls the legacy scope-resolution pass, which will be disabled by default in
+a future version. `macroexpand!` defaults it to `false`. Migrate by passing
+`legacyscope=false`; callers using `Meta.unescape`/`Meta.reescape` may need fixes.
+
+**`LazyScopedValue`:** a `ScopedValue` whose default is computed lazily by a
+`OncePerProcess` callback. `AbstractScopedValue` is the base type of both.
+
+**Other library additions:** `takestring!(::IOBuffer)`, `chopprefix`/`chopsuffix`
+accept an `AbstractChar`, `Base.active_manifest()`, `isoweekdate`/`isoyear`/
+`weeksinyear` in `Dates`, and `@test_throws ExceptionType pattern expr`.
+`sort(keys(::Dict))` and `sort(values(::Dict))` now collect instead of throwing.
+
+**Deprecated:** `merge(combine::Callable, d::AbstractDict...)`; use `mergewith`.
+
+**Command line:** `--trace-eval` shows expressions evaluated at top level;
+`--sysimage-native-code=no` is deprecated. On Apple Silicon `Sys.CPU_THREADS`
+now counts all cores, which changes the `--threads=auto` default.
 
 **Unicode 17** support, plus a new arrow-precedence operator (U+1F8B2).
 
@@ -376,7 +399,9 @@ For packages:
 
 - Do not persist or compare `hash` values across the upgrade — hashing, notably for
   `AbstractString`, changed.
-- 1.13 is a prerelease; pin to it only for testing until a final release exists.
+- Check code that depends on the return value of `@doc` or calls `macroexpand`
+  with `Meta.unescape`/`Meta.reescape`.
+- Replace `merge(f, d1, d2)` calls with `mergewith(f, d1, d2)`.
 
 ---
 
@@ -387,7 +412,8 @@ For packages:
 - Native code caching (fast second load) is a 1.9+ feature.
 - `@kwdef` is public API from Julia 1.7+.
 - Missing-field access raises `FieldError` (not `ErrorException`) from 1.12+; redefinable types and `Base.Fix` are also 1.12+.
-- `@__FUNCTION__`, `nth`, `ispositive`/`isnegative`, and `Iterators.findeach` are 1.13+.
+- `@__FUNCTION__`, `nth`, `ispositive`/`isnegative`, `Iterators.findeach`, and `LazyScopedValue` are 1.13+.
+- The current stable release is 1.13.4 (2026-11-13); the LTS is 1.10.
 - `hash` values are not stable across Julia versions — string hashing changed in 1.13.
 
 ## What an Agent Must Not Infer Without Evidence
@@ -395,8 +421,8 @@ For packages:
 - That a package's `[compat]` bound reflects the minimum actually required — it may be set conservatively.
 - That `Requires.jl` is still the right approach — check Julia version before recommending it.
 - That `Base.@kwdef` is available on 1.6 — it exists but was `Base.@kwdef` (not re-exported) and is considered internal before 1.7.
-- That `Threads.@threads` comprehensions, `tap(f)`, `@label` with `break name`, `typegroup` mutually-recursive types, or the wrapping operators `+%`/`-%`/`*%` exist in 1.13. These are Julia **1.14** (master) features, not 1.13 — do not attribute them to 1.13.
-- That 1.13 is released. As of mid-2026 it is a prerelease; check `VERSION` before relying on any 1.13-only feature.
+- That `Threads.@threads` comprehensions, `tap(f)`, `@label` with `break name`, `typegroup` mutually-recursive types, or the wrapping operators `+%`/`-%`/`*%` exist in 1.13. These are Julia **1.14** (beta) features, not 1.13 — do not attribute them to 1.13.
+- That 1.14 features are available on 1.13. 1.14 is in beta as of 2026-11; check `VERSION` before relying on any feature newer than the project's Julia.
 
 ## What Requires Whole-Program Analysis
 

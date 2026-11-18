@@ -2,7 +2,7 @@
 
 Rust has two orthogonal version axes, and confusing them is a common error:
 
-- **Releases** ship every ~6 weeks (1.0 in 2015 → 1.85 Feb 2025 → 1.97 as of mid-2026).
+- **Releases** ship every ~6 weeks (1.0 in 2015 → 1.85 Feb 2025 → 1.100 Nov 2026).
   A release adds stabilized features available to all editions.
 - **Editions** (2015, 2018, 2021, 2024) are opt-in per crate via `edition` in
   `Cargo.toml`. An edition can make **breaking** surface changes (new keywords,
@@ -78,6 +78,35 @@ The largest edition since 2018. Key changes:
 | GATs (generic associated types) | 1.65 |
 | `async fn`/RPIT in traits (RPITIT) | 1.75 |
 | edition 2024 / `gen` reserved | 1.85 |
+| async closures (`async \|x\| ...`, `AsyncFn*` in prelude) | 1.85 |
+| trait upcasting (`&dyn Sub` to `&dyn Super`) | 1.86 |
+| `use<...>` precise capturing in `-> impl Trait` in traits | 1.87 |
+| `let` chains (`if let ... && let ...`), **edition 2024 only** | 1.88 |
+| naked functions, `#[cfg(true)]` / `#[cfg(false)]` | 1.88 |
+| `_` as an inferred const generic argument | 1.89 |
+| `if let` guards on match arms | 1.95 |
+| `assert_matches!`, `core::range` range types | 1.96 |
+| C-variadic function definitions | 1.99 |
+| never type `!` stabilized | 1.100 |
+| allocator API: `Allocator`, `Global`, `Box::new_in` | 1.100 |
+
+Std additions by release (all editions): `Vec::extract_if`, `HashMap::extract_if`
+(1.87, 1.88); `get_disjoint_mut` (1.86); `Vec::pop_if` (1.86); `Cell::update`
+(1.88); `Result::flatten`, `File::lock` (1.89); `strict_*` integer ops (1.91);
+`RwLockWriteGuard::downgrade` (1.92); `std::fmt::from_fn` (1.93);
+`<[T]>::array_windows` (1.94); `Atomic*::update` (1.95).
+
+### Cargo
+
+| Feature | Stable since |
+|---------|--------------|
+| automatic garbage collection of cache | 1.88 |
+| multi-package `cargo publish` | 1.90 |
+| `build.build-dir` | 1.91 |
+| `include` key in config files; TOML 1.1 manifests (raises MSRV) | 1.94 |
+| `build.warnings`, `resolver.lockfile-path` | 1.97 |
+| `serde = { workspace = true, default-features = false }` on edition 2024 | 1.99 |
+| minimum publish age (dependency cooldown); `cargo install` uses the packaged lockfile | 1.100 |
 
 ---
 
@@ -97,7 +126,7 @@ closure-capture or array-iteration behavior that changed meaning).
 - 2021 changed array `.into_iter()` to yield values; 2024 reserved `gen` and
   changed RPIT lifetime capture.
 - `cargo fix --edition` handles most migration mechanically.
-- The current stable release line is 1.9x (1.97 as of mid-2026), edition 2024.
+- The current stable release is 1.100 (2026-11-12), edition 2024.
 
 ## What an Agent Must Not Infer Without Evidence
 
@@ -105,6 +134,10 @@ closure-capture or array-iteration behavior that changed meaning).
   changes above — most features are release-gated.
 - That nightly-only features (specialization, `generic_const_exprs`, full generators)
   are stable — they are not, on any edition.
+- That `let` chains work on edition 2021 or earlier — they are stable from 1.88 on
+  edition 2024 only.
+- That the never type `!` or the allocator API is nightly-only on 1.100 or later —
+  both are stable there, and still nightly-only before.
 - That `async`/`await` needs edition 2021 — the keyword was reserved in 2018 and
   the feature stabilized in release 1.39, usable on 2018+.
 - That an edition upgrade is required to use a recent stdlib API — check the
