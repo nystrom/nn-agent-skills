@@ -55,10 +55,16 @@ Behavioral coverage, not a line-percent scolding. Standalone or via the fan-out.
 
 ### dead-code-code-review
 
-Dead-code lens: unreachable helpers, unused exports, orphaned modules, stale
-flags, commented-out blocks — with removal proposals. Treats public/exported
-API conservatively and looks for callers in other repos (`gh search`, monorepo
-siblings) before calling something dead. Standalone or via the fan-out.
+Dead-code lens for a change set or a whole repository, in any programming
+language: unreachable helpers, unused exports, orphaned modules, stale
+re-exports, dead branches and flags, commented-out blocks. A script builds a
+whole-tree reference index and lists candidates, roots, and public-API status
+(needs Node and git, and `gh` for the cross-repository search). The model
+confirms each finding from a language server, text search, or reading, treats
+the public API and other repositories' callers conservatively, and asks you
+about roots it cannot evaluate before it reports anything as dead. It reports
+findings with a proposed change and the check that verifies it, and does not
+edit files, commit, or post. Standalone or via the fan-out.
 
 ### ai-slop-code-review
 
