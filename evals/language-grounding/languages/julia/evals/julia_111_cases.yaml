@@ -1,0 +1,362 @@
+# Evals for Julia 1.11 — new features, semantic changes, and version disambiguation
+#
+# Sources: Julia 1.11 release notes (docs.julialang.org/en/v1.11/NEWS/)
+#
+# Three kinds of cases:
+#
+#   output_prediction — asks what a snippet prints; tests knowledge of 1.11 semantics
+#   version_guard     — asks whether a feature is available in an earlier version
+#   semantic_change   — asks what changed from 1.10 to 1.11
+#
+# Key 1.11 additions:
+#   - `public` keyword: public API without auto-import
+#   - `Memory{T}`: lower-level array-like container
+#   - `ScopedValue`: task-inheriting dynamic scope (Base.ScopedValues)
+#   - `@main` macro: standardized entry point
+#   - `Threads.@threads :greedy` scheduler
+#   - `in!(x, s)`: membership test that inserts if absent
+#   - `filter` on NamedTuple
+#   - `allequal`/`allunique` accept predicate argument
+#   - `logrange()`: constant-ratio range
+#   - `Stateful`: `length` method removed (silently wrong results prevented)
+#   - `invmod(n, T)`: modular inverse for native integer types
+#
+# Skills exercised: julia/versions, julia/semantics
+
+cases:
+
+  # ── Semantic changes: behavior that differs from 1.10 ───────────────────────
+
+  - id: jl.111.public_not_auto_imported
+    kind: output_prediction
+    skill: julia/versions
+    topic: module_system
+    version: "1.11"
+    prompt: >
+      What does this program print in Julia 1.11?
+    code: |
+      module M
+          export foo
+          public bar
+          foo() = "foo"
+          bar() = "bar"
+      end
+
+      using M
+      println(foo())
+      try
+          println(bar())
+      catch e
+          println(typeof(e))
+      end
+      println(M.bar())
+    choices:
+      - "foo\nbar\nbar"
+      - "foo\nUndefVarError\nbar"
+      - "foo\nbar\nMethodError"
+    expected_output: "foo\nUndefVarError\nbar"
+    wrong_output_reason: >
+      "foo\nbar\nbar" — assumes public works like export and brings the name into
+      scope with `using`. The `public` keyword marks bar as public API but does NOT
+      make it available without qualification. `using M` imports only exported names.
+      bar() without M. raises UndefVarError; M.bar() works.
+
+  - id: jl.111.stateful_length_removed
+    kind: semantic_change
+    skill: julia/versions
+    topic: iterators
+    version: "1.11"
+    prompt: >
+      What does this print in Julia 1.11?
+    code: |
+      using Base.Iterators
+      s = Stateful([1, 2, 3])
+      next!(s)
+      try
+          println(length(s))
+      catch e
+          println(typeof(e))
+      end
+    choices:
+      - "2"
+      - "3"
+      - "MethodError"
+    expected_output: "MethodError"
+    wrong_output_reason: >
+      "2" — the Julia 1.10 and earlier behavior, where length(::Stateful) returned
+      the remaining element count. Julia 1.11 removed this method because it silently
+      gave wrong results after partial iteration of non-Sized iterables.
+      Code relying on length(::Stateful) breaks in 1.11.
+
+  - id: jl.111.scoped_value_task_inheritance
+    kind: output_prediction
+    skill: julia/versions
+    topic: scoped_values
+    version: "1.11"
+    prompt: >
+      What does this program print in Julia 1.11?
+    code: |
+      using Base.ScopedValues
+
+      const X = ScopedValue(10)
+
+      with(X => 99) do
+          t = Threads.@spawn X[]
+          println(fetch(t))
+      end
+      println(X[])
+    choices:
+      - "10\n10"
+      - "99\n99"
+      - "99\n10"
+      - "UndefVarError"
+    expected_output: "99\n10"
+    wrong_output_reason: >
+      "10\n10" — assumes @spawn does not inherit the calling task's scoped values.
+      ScopedValues are task-inherited: a spawned task sees the same with()-established
+      bindings as its parent at the time of spawning. After the with() block exits,
+      X[] returns the default (10) again.
+
+  - id: jl.111.in_bang_inserts
+    kind: output_prediction
+    skill: julia/versions
+    topic: collections
+    version: "1.11"
+    prompt: >
+      What does this program print in Julia 1.11?
+    code: |
+      s = Set([1, 2, 3])
+      println(in!(4, s))
+      println(in!(2, s))
+      println(length(s))
+    choices:
+      - "true\ntrue\n3"
+      - "false\ntrue\n4"
+      - "false\nfalse\n4"
+      - "MethodError"
+    expected_output: "false\ntrue\n4"
+    wrong_output_reason: >
+      "MethodError" or "true\ntrue\n3" — assumes in! is the same as in, or doesn't exist.
+      in!(x, s) returns whether x was already in s, and inserts x if it was absent.
+      4 was not in s → returns false, inserts 4. 2 was already in s → returns true,
+      does not insert. Final size is 4.
+
+  - id: jl.111.filter_named_tuple
+    kind: output_prediction
+    skill: julia/versions
+    topic: collections
+    version: "1.11"
+    prompt: >
+      What does this program print in Julia 1.11?
+    code: |
+      nt = (a=1, b=2, c=3, d=4)
+      result = filter(p -> p.second > 2, nt)
+      println(typeof(result) <: NamedTuple)
+      println(result)
+    choices:
+      - "false\n[3, 4]"
+      - "true\n(c = 3, d = 4)"
+      - "MethodError"
+    expected_output: "true\n(c = 3, d = 4)"
+    wrong_output_reason: >
+      "MethodError" — assumes filter is not defined on NamedTuple before 1.11.
+      Julia 1.11 added filter support for NamedTuple. The predicate receives
+      name => value pairs; the result is a NamedTuple containing matching pairs.
+
+  - id: jl.111.allequal_with_predicate
+    kind: output_prediction
+    skill: julia/versions
+    topic: collections
+    version: "1.11"
+    prompt: >
+      What does this program print in Julia 1.11?
+    code: |
+      println(allequal(iseven, [2, 4, 6]))
+      println(allequal(iseven, [2, 3, 6]))
+      println(allunique(x -> x % 3, [1, 2, 3]))
+    choices:
+      - "MethodError\nMethodError\nMethodError"
+      - "true\nfalse\ntrue"
+      - "true\nfalse\nfalse"
+    expected_output: "true\nfalse\ntrue"
+    wrong_output_reason: >
+      "MethodError" — assumes allequal and allunique only accept collections, not
+      predicate + collection. Julia 1.11 added predicate forms: allequal(f, itr)
+      checks whether f returns the same value for all elements; allunique(f, itr)
+      checks whether f returns distinct values. [1,2,3] mod 3 = [1,2,0], all distinct.
+
+  - id: jl.111.logrange_output
+    kind: output_prediction
+    skill: julia/versions
+    topic: ranges
+    version: "1.11"
+    prompt: >
+      What does this program print in Julia 1.11?
+    code: |
+      v = logrange(1.0, 1000.0; length=4)
+      println(length(v))
+      println(v[1])
+      println(v[end])
+    choices:
+      - "UndefVarError"
+      - "4\n1.0\n1000.0"
+      - "4\n0.0\n1000.0"
+    expected_output: "4\n1.0\n1000.0"
+    wrong_output_reason: >
+      "UndefVarError" — assumes logrange does not exist. logrange was added in Julia
+      1.11. It produces a range with constant ratio between consecutive elements
+      (geometric progression). The first and last elements are exactly the given
+      start and stop values.
+
+  - id: jl.111.memory_type
+    kind: output_prediction
+    skill: julia/versions
+    topic: memory
+    version: "1.11"
+    prompt: >
+      What does this program print in Julia 1.11?
+    code: |
+      m = Memory{Int}(undef, 3)
+      m[1] = 10
+      m[2] = 20
+      m[3] = 30
+      println(typeof(m))
+      println(m[2])
+      println(m isa AbstractArray)
+    choices:
+      - "UndefVarError\n...\n..."
+      - "Memory{Int64}\n20\ntrue"
+      - "Array{Int64, 1}\n20\ntrue"
+    expected_output: "Memory{Int64}\n20\ntrue"
+    wrong_output_reason: >
+      "UndefVarError" — assumes Memory does not exist before 1.12.
+      Memory{T} was added in Julia 1.11 as a lower-level alternative to Vector{T}:
+      it is 1-indexed, has O(1) access, but does not support push! or resize!.
+      It is a subtype of AbstractArray.
+
+  - id: jl.111.threads_greedy_scheduler
+    kind: output_prediction
+    skill: julia/versions
+    topic: threading
+    version: "1.11"
+    prompt: >
+      Does this syntax work in Julia 1.10?
+    code: |
+      Threads.@threads :greedy for i in 1:10
+          println(i)
+      end
+    choices:
+      - "yes — :greedy has always been supported"
+      - "no — :greedy was added in Julia 1.11"
+      - "no — @threads does not accept a scheduler argument"
+    expected_output: "no — :greedy was added in Julia 1.11"
+    wrong_output_reason: >
+      "yes" — assumes :greedy has been available since @threads was introduced.
+      Julia 1.10 supports :static and :dynamic schedulers. :greedy, which uses a
+      work-stealing approach optimized for non-uniform tasks, was added in 1.11.
+
+  # ── Version guards: APIs that do not exist before 1.11 ──────────────────────
+
+  - id: jl.111.public_keyword_requires_111
+    kind: version_guard
+    skill: julia/versions
+    topic: module_system
+    prompt: >
+      Is the `public` keyword available in Julia 1.10?
+    code: |
+      module M
+      public foo
+      foo() = 1
+      end
+    choices:
+      - "yes"
+      - "no"
+    expected_output: "no"
+    wrong_output_reason: >
+      "yes" — the public keyword was added in Julia 1.11. In Julia 1.10 and earlier
+      it is a parse error. Packages targeting 1.10 must use [compat] julia = "1.11"
+      before using public.
+
+  - id: jl.111.memory_requires_111
+    kind: version_guard
+    skill: julia/versions
+    topic: memory
+    prompt: >
+      Is `Memory{T}` available in Julia 1.10?
+    code: |
+      m = Memory{Float64}(undef, 100)
+    choices:
+      - "yes"
+      - "no"
+    expected_output: "no"
+    wrong_output_reason: >
+      "yes" — Memory{T} was introduced in Julia 1.11. In 1.10, Vector{T} is the
+      lowest-level mutable array available from Base.
+
+  - id: jl.111.scoped_values_requires_111
+    kind: version_guard
+    skill: julia/versions
+    topic: scoped_values
+    prompt: >
+      Is `Base.ScopedValues` available in Julia 1.10?
+    code: |
+      using Base.ScopedValues
+      const X = ScopedValue(0)
+    choices:
+      - "yes"
+      - "no"
+    expected_output: "no"
+    wrong_output_reason: >
+      "yes" — ScopedValues was added to Base in Julia 1.11. In 1.10, the pattern
+      requires thread-local storage workarounds or a third-party package.
+
+  - id: jl.111.in_bang_requires_111
+    kind: version_guard
+    skill: julia/versions
+    topic: collections
+    prompt: >
+      Is `in!(x, s)` available in Julia 1.10?
+    code: |
+      s = Set{Int}()
+      in!(1, s)
+    choices:
+      - "yes"
+      - "no"
+    expected_output: "no"
+    wrong_output_reason: >
+      "yes" — in! was added in Julia 1.11. In 1.10, the insert-and-check pattern
+      requires separate push! and in calls.
+
+  - id: jl.111.invmod_type_requires_111
+    kind: version_guard
+    skill: julia/versions
+    topic: math
+    prompt: >
+      Is `invmod(n, T)` (modular inverse with type argument) available in Julia 1.10?
+    code: |
+      println(invmod(3, UInt8))   # expected: 0xab (171)
+    choices:
+      - "yes"
+      - "no"
+    expected_output: "no"
+    wrong_output_reason: >
+      "yes" — the two-argument form invmod(n, T) where T is an integer type was added
+      in Julia 1.11. In 1.10, only invmod(n, m) (modular inverse mod m as an integer)
+      exists.
+
+  - id: jl.111.logrange_requires_111
+    kind: version_guard
+    skill: julia/versions
+    topic: ranges
+    prompt: >
+      Is `logrange` available in Julia 1.10?
+    code: |
+      logrange(1.0, 100.0; length=5)
+    choices:
+      - "yes"
+      - "no"
+    expected_output: "no"
+    wrong_output_reason: >
+      "yes" — logrange was added in Julia 1.11. In 1.10, creating a geometric
+      sequence requires e.g. exp.(range(log(start), log(stop); length=n)) or
+      a third-party package.
