@@ -50,8 +50,17 @@ risk, release readiness. Go/no-go oriented. Standalone or via the fan-out.
 Test-coverage lens: missing or weak tests for new and changed behavior,
 untested failure/edge paths, assertions that would not catch the bug, brittle
 snapshots, skipped or deleted tests without replacement — and useless tests
-(tautologies, duplicates, mock-only, coverage theater) with a prune proposal.
-Behavioral coverage, not a line-percent scolding. Standalone or via the fan-out.
+(no assertion, assertions that hold for any input, cases that reach no repo
+code, tautologies, duplicates, mock-only, coverage theater) with a prune
+proposal. Works for any language. The model does the missing-coverage analysis
+by reading; `scripts/scan.mjs`, a table-driven scanner that needs only Node,
+finds useless-test candidates with whole-tree evidence, and a judgment pass
+confirms each. Symbol facts come from the language server when one exists, and
+from text search and reading otherwise; each finding says which. It refuses
+snapshot-backed, skipped, and helper-asserting cases and counts each refusal.
+Every finding carries a proposed change, and the lens never edits files.
+Reviews a diff or a whole repo. Behavioral coverage, not a line-percent
+scolding. Standalone or via the fan-out.
 
 ### dead-code-code-review
 
