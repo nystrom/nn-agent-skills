@@ -1,0 +1,426 @@
+# Evals for Python number and truthiness semantics — adversarial output prediction
+#
+# Design: same as other eval files — show code, ask what it outputs.
+# No other language named. Each case targets a specific numeric or boolean behavior.
+#
+# Number topics:
+#   - floor division truncates toward -inf, not toward zero
+#   - modulo sign follows divisor, not dividend
+#   - round() uses banker's rounding (round half to even)
+#   - nan is not equal to itself
+#   - nan is truthy
+#   - inf arithmetic
+#   - hash consistency across equal numeric types
+#   - bool arithmetic (already seeded in edge_cases; extended here)
+#   - complex numbers
+#   - int division always returns float in Python 3
+#
+# Truthiness topics:
+#   - "0" is truthy (non-empty string)
+#   - float('nan') is truthy
+#   - [[]] is truthy (non-empty list)
+#   - __bool__ takes priority over __len__
+#   - all([]) is True, any([]) is False
+#   - or/and short-circuit and suppress side effects
+#   - chained comparisons share middle operand
+#
+# Skills exercised: python-semantics, python-sharp-edges
+
+cases:
+
+  # ── Number semantics ────────────────────────────────────────────────────────
+
+  - id: py.number.floor_div_negative
+    skill: python-semantics
+    topic: floor_division
+    prompt: >
+      What does this program print?
+    code: |
+      print(-7 // 2)
+      print(7 // -2)
+    choices:
+      - "-3\n-3"
+      - "-4\n-4"
+      - "-3\n-4"
+      - "-4\n-3"
+    expected_output: "-4\n-4"
+    wrong_output_reason: >
+      "-3\n-3" — assumes // truncates toward zero like C integer division.
+      Python's // always floors toward negative infinity.
+      -7 // 2 is -4 (not -3), and 7 // -2 is -4 (not -3).
+
+  - id: py.number.modulo_sign_follows_divisor
+    skill: python-semantics
+    topic: modulo
+    prompt: >
+      What does this program print?
+    code: |
+      print(-7 % 3)
+      print(7 % -3)
+    choices:
+      - "-1\n1"
+      - "2\n-2"
+      - "-1\n-2"
+      - "2\n1"
+    expected_output: "2\n-2"
+    wrong_output_reason: >
+      "-1\n1" — assumes the result sign follows the dividend, as in C/Java.
+      Python's % result always has the same sign as the divisor.
+      -7 % 3 == 2 (because -7 == -3*3 + 2), and 7 % -3 == -2 (because 7 == -2*(-3) + (-2) ... wait let me check)
+    note: >
+      -7 % 3: floor(-7/3) = floor(-2.33) = -3; -7 - (-3)*3 = -7+9 = 2. Result: 2.
+      7 % -3: floor(7/-3) = floor(-2.33) = -3; 7 - (-3)*(-3) = 7-9 = -2. Result: -2.
+
+  - id: py.number.divmod_negative
+    skill: python-semantics
+    topic: floor_division
+    prompt: >
+      What does this program print?
+    code: |
+      q, r = divmod(-7, 2)
+      print(q, r)
+      print(q * 2 + r)
+    choices:
+      - "-3 -1\n-7"
+      - "-4 1\n-7"
+      - "-3 1\n-7"
+    expected_output: "-4 1\n-7"
+    wrong_output_reason: >
+      "-3 -1\n-7" — assumes divmod truncates toward zero.
+      divmod(a, b) returns (a // b, a % b), both using Python's floor semantics.
+      -7 // 2 == -4, -7 % 2 == 1; the invariant q*b + r == a always holds.
+
+  - id: py.number.int_division_returns_float
+    skill: python-versions
+    topic: division_operator
+    prompt: >
+      What does this program print?
+    code: |
+      print(7 / 2)
+      print(type(7 / 2))
+      print(type(7 // 2))
+    choices:
+      - "3\n<class 'int'>\n<class 'int'>"
+      - "3.5\n<class 'float'>\n<class 'int'>"
+      - "3.5\n<class 'float'>\n<class 'float'>"
+    expected_output: "3.5\n<class 'float'>\n<class 'int'>"
+    wrong_output_reason: >
+      "3\n<class 'int'>\n<class 'int'>" — assumes / performs integer division on two ints.
+      In Python 3, / always returns float. Integer division requires //.
+
+  - id: py.number.banker_rounding
+    skill: python-sharp-edges
+    topic: rounding
+    prompt: >
+      What does this program print?
+    code: |
+      print(round(0.5))
+      print(round(1.5))
+      print(round(2.5))
+      print(round(3.5))
+    choices:
+      - "1\n2\n3\n4"
+      - "0\n2\n2\n4"
+      - "1\n1\n3\n3"
+    expected_output: "0\n2\n2\n4"
+    wrong_output_reason: >
+      "1\n2\n3\n4" — assumes round-half-up.
+      Python uses banker's rounding (round half to even): 0.5 rounds to 0, 1.5 to 2,
+      2.5 to 2, 3.5 to 4. This minimizes cumulative rounding error.
+    note: >
+      Floating-point representation means results can surprise even further:
+      round(2.5) == 2 but round(0.15, 1) may not equal 0.2.
+
+  - id: py.number.nan_not_equal_to_itself
+    skill: python-sharp-edges
+    topic: nan_semantics
+    prompt: >
+      What does this program print?
+    code: |
+      x = float('nan')
+      print(x == x)
+      print(x != x)
+      print(x < 0)
+      print(x > 0)
+    choices:
+      - "True\nFalse\nFalse\nFalse"
+      - "False\nTrue\nFalse\nFalse"
+      - "True\nFalse\nFalse\nTrue"
+    expected_output: "False\nTrue\nFalse\nFalse"
+    wrong_output_reason: >
+      "True\nFalse\nFalse\nFalse" — assumes == is reflexive for all values.
+      IEEE 754 defines nan != nan. Python respects this: x == x is False when x is nan.
+      All ordered comparisons with nan return False.
+
+  - id: py.number.nan_is_truthy
+    skill: python-sharp-edges
+    topic: nan_semantics
+    prompt: >
+      What does this program print?
+    code: |
+      x = float('nan')
+      print(bool(x))
+      print("truthy" if x else "falsy")
+    choices:
+      - "False\nfalsy"
+      - "True\ntruthy"
+      - "False\ntruthy"
+    expected_output: "True\ntruthy"
+    wrong_output_reason: >
+      "False\nfalsy" — assumes nan is falsy because it is "not a number" or similar to 0.
+      Python's truthiness for floats is simply bool(x) == (x != 0.0).
+      nan != 0.0 is True (even though nan != nan), so nan is truthy.
+
+  - id: py.number.inf_arithmetic
+    skill: python-sharp-edges
+    topic: inf_semantics
+    prompt: >
+      What does this program print?
+    code: |
+      inf = float('inf')
+      print(inf + 1 == inf)
+      print(inf - inf)
+      print(1 / inf)
+    choices:
+      - "False\n0.0\n0.0"
+      - "True\nnan\n0.0"
+      - "True\n0.0\n0.0"
+      - "OverflowError"
+    expected_output: "True\nnan\n0.0"
+    wrong_output_reason: >
+      "OverflowError" or "False\n0.0\n0.0" — assumes Python raises on overflow or
+      that inf obeys normal arithmetic. IEEE 754: inf + 1 == inf; inf - inf == nan;
+      1 / inf == 0.0. No exception is raised.
+
+  - id: py.number.hash_equal_across_types
+    skill: python-semantics
+    topic: hash_consistency
+    prompt: >
+      What does this program print?
+    code: |
+      print(1 == 1.0)
+      print(1 == True)
+      print(hash(1) == hash(1.0))
+      print(hash(1) == hash(True))
+      d = {1: "int"}
+      d[1.0] = "float"
+      d[True] = "bool"
+      print(d)
+    choices:
+      - "True\nTrue\nFalse\nFalse\n{1: 'int', 1.0: 'float', True: 'bool'}"
+      - "True\nTrue\nTrue\nTrue\n{1: 'bool'}"
+      - "True\nTrue\nTrue\nTrue\n{1: 'int', 1.0: 'float'}"
+    expected_output: "True\nTrue\nTrue\nTrue\n{1: 'bool'}"
+    wrong_output_reason: >
+      Three separate keys — assumes different types always produce distinct dict entries.
+      Python's hash invariant: equal objects must have equal hashes.
+      1 == 1.0 == True, so hash(1) == hash(1.0) == hash(True), and all three key
+      expressions refer to the same dict slot. Each assignment overwrites the previous.
+
+  - id: py.number.complex_real_imag
+    skill: python-semantics
+    topic: complex_numbers
+    prompt: >
+      What does this program print?
+    code: |
+      z = 3 + 4j
+      print(abs(z))
+      print(z.real, z.imag)
+      print(isinstance(z, float))
+    choices:
+      - "7\n3 4\nFalse"
+      - "5.0\n3.0 4.0\nFalse"
+      - "5\n3.0 4.0\nTrue"
+    expected_output: "5.0\n3.0 4.0\nFalse"
+    wrong_output_reason: >
+      "7\n3 4\nFalse" — assumes abs() sums components or that components are int.
+      abs(z) on a complex number returns the magnitude sqrt(re²+im²) = 5.0.
+      .real and .imag are always float. complex is not a subclass of float.
+
+  # ── Truthiness semantics ────────────────────────────────────────────────────
+
+  - id: py.truthy.string_zero_is_truthy
+    skill: python-semantics
+    topic: truthiness
+    prompt: >
+      What does this program print?
+    code: |
+      values = ["0", "False", "None", "", "  "]
+      for v in values:
+          print(bool(v))
+    choices:
+      - "False\nFalse\nFalse\nFalse\nFalse"
+      - "False\nFalse\nFalse\nFalse\nTrue"
+      - "True\nTrue\nTrue\nFalse\nTrue"
+    expected_output: "True\nTrue\nTrue\nFalse\nTrue"
+    wrong_output_reason: >
+      "False\nFalse\nFalse\nFalse\nTrue" — assumes "0", "False", "None" are falsy
+      because they represent falsy values in other contexts. Python string truthiness
+      depends only on length: any non-empty string is truthy, including "0", "False", "  ".
+
+  - id: py.truthy.nested_empty_list
+    skill: python-semantics
+    topic: truthiness
+    prompt: >
+      What does this program print?
+    code: |
+      print(bool([]))
+      print(bool([[]]))
+      print(bool([[], [], []]))
+      print(bool([[False, None, 0]]))
+    choices:
+      - "False\nFalse\nFalse\nFalse"
+      - "False\nTrue\nTrue\nTrue"
+      - "False\nFalse\nTrue\nFalse"
+    expected_output: "False\nTrue\nTrue\nTrue"
+    wrong_output_reason: >
+      "False\nFalse\nFalse\nFalse" — assumes truthiness recurses into elements.
+      List truthiness is determined only by the list's own length. [[]] has one element,
+      so it is truthy, regardless of what that element contains.
+
+  - id: py.truthy.bool_priority_over_len
+    skill: python-semantics
+    topic: truthiness
+    prompt: >
+      What does this program print?
+    code: |
+      class Contradictory:
+          def __len__(self):
+              return 10
+          def __bool__(self):
+              return False
+
+      class LenOnly:
+          def __len__(self):
+              return 0
+
+      print(bool(Contradictory()))
+      print(bool(LenOnly()))
+    choices:
+      - "True\nFalse"
+      - "False\nFalse"
+      - "False\nTrue"
+    expected_output: "False\nFalse"
+    wrong_output_reason: >
+      "True\nFalse" — assumes __len__ takes priority over __bool__.
+      Python checks __bool__ first; __len__ is only consulted if __bool__ is absent.
+      Contradictory has __bool__ returning False, so bool() returns False despite len == 10.
+
+  - id: py.truthy.all_any_empty
+    skill: python-semantics
+    topic: truthiness
+    prompt: >
+      What does this program print?
+    code: |
+      print(all([]))
+      print(any([]))
+      print(all([False, False]))
+      print(any([False, False]))
+    choices:
+      - "False\nFalse\nFalse\nFalse"
+      - "True\nFalse\nFalse\nFalse"
+      - "False\nTrue\nFalse\nFalse"
+    expected_output: "True\nFalse\nFalse\nFalse"
+    wrong_output_reason: >
+      "False\nFalse\nFalse\nFalse" — assumes all([]) is False (nothing was true).
+      all() is vacuously True for an empty sequence: there is no element that violates
+      the condition. any() is False for empty: there is no element that satisfies it.
+
+  - id: py.truthy.short_circuit_suppresses_call
+    skill: python-semantics
+    topic: boolean_operators
+    prompt: >
+      What does this program print?
+    code: |
+      def boom():
+          print("called")
+          return True
+
+      result1 = False and boom()
+      result2 = True or boom()
+      print("done")
+    choices:
+      - "called\ncalled\ndone"
+      - "done"
+      - "called\ndone"
+    expected_output: "done"
+    wrong_output_reason: >
+      "called\ncalled\ndone" — assumes both operands are always evaluated.
+      Python's and returns the first falsy value without evaluating further;
+      or returns the first truthy value without evaluating further.
+      Neither call to boom() is reached.
+
+  - id: py.truthy.chained_comparison_one_eval
+    skill: python-semantics
+    topic: chained_comparisons
+    prompt: >
+      What does this program print?
+    code: |
+      calls = []
+
+      def record(name, val):
+          calls.append(name)
+          return val
+
+      result = record("a", 1) < record("b", 5) < record("c", 3)
+      print(result)
+      print(calls)
+    choices:
+      - "True\n['a', 'b', 'c']"
+      - "False\n['a', 'b', 'c']"
+      - "False\n['a', 'b']"
+    expected_output: "False\n['a', 'b', 'c']"
+    wrong_output_reason: >
+      "True\n['a', 'b', 'c']" — assumes 1 < 5 < 3 is evaluated as (1 < 5) < 3,
+      which would be True < 3 == 1 < 3 == True.
+      Python chained comparisons are not left-associative. a < b < c means
+      (a < b) and (b < c) with b evaluated exactly once. 1 < 5 is True, but 5 < 3 is False.
+
+  - id: py.truthy.none_check_with_equality
+    skill: python-sharp-edges
+    topic: none_comparison
+    prompt: >
+      This function is supposed to check whether x is None. Which version is correct?
+    code: |
+      def check_a(x): return x == None
+      def check_b(x): return x is None
+
+      class Weird:
+          def __eq__(self, other): return True
+
+      w = Weird()
+      print(check_a(w))
+      print(check_b(w))
+    choices:
+      - "True\nTrue"
+      - "False\nFalse"
+      - "True\nFalse"
+      - "False\nTrue"
+    expected_output: "True\nFalse"
+    wrong_output_reason: >
+      "False\nFalse" or "True\nTrue" — assumes == and is are interchangeable for None.
+      check_a uses ==, which calls __eq__ on w; Weird.__eq__ returns True for everything,
+      so check_a gives a false positive. check_b uses is, which is identity and cannot
+      be overridden; it correctly returns False.
+
+  - id: py.truthy.int_subclass_truthiness
+    skill: python-semantics
+    topic: bool_subtype
+    prompt: >
+      What does this program print?
+    code: |
+      print(bool(0))
+      print(bool(0.0))
+      print(bool(0j))
+      print(bool(b""))
+      print(bool(range(0)))
+    choices:
+      - "False\nFalse\nFalse\nTrue\nTrue"
+      - "False\nFalse\nFalse\nFalse\nFalse"
+      - "False\nFalse\nTrue\nFalse\nFalse"
+    expected_output: "False\nFalse\nFalse\nFalse\nFalse"
+    wrong_output_reason: >
+      "False\nFalse\nFalse\nTrue\nTrue" — assumes only numeric zero types are falsy.
+      Python's falsy values include: False, None, zero of any numeric type (0, 0.0, 0j),
+      empty sequences and collections ([], (), {}, set(), b"", ""), and range(0).
+      b"" and range(0) are both empty, so both are falsy.

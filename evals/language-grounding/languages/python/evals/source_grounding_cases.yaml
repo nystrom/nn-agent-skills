@@ -1,0 +1,166 @@
+# Evals for source grounding
+# Tests that an agent cites or references the correct skill/spec section when
+# making a semantic claim, rather than asserting facts without evidence.
+#
+# These cases focus on areas where an agent could say something plausible but wrong.
+# A grounded answer names its source or references a known rule.
+#
+# Skills exercised: python-semantics, python-sharp-edges, python-toolchain, python-types
+
+cases:
+
+  - id: py.grounding.unbound_local_error
+    skill: python-semantics
+    topic: scoping
+    prompt: >
+      Why does this code raise an error even though `x` is defined at module level?
+    code: |
+      x = 1
+      def f():
+          print(x)
+          x = 2
+    expected_behavior:
+      must_not_say:
+        - "NameError: x is not defined"
+        - "x is not in scope"
+        - "you forgot to import x"
+      must_say:
+        - "UnboundLocalError"
+      must_say_one_of:
+        - "Python marks x as local because of the assignment"
+        - "the assignment later in the function makes x local for the whole function"
+        - "use global x to refer to the module-level name"
+
+  - id: py.grounding.mutable_default_argument
+    skill: python-sharp-edges
+    topic: mutable_defaults
+    prompt: >
+      Why does this function append to the same list every time it is called without an argument?
+    code: |
+      def add(item, lst=[]):
+          lst.append(item)
+          return lst
+    expected_behavior:
+      must_not_say:
+        - "a new empty list is created each call"
+        - "this is a Python 3 regression"
+      must_say_one_of:
+        - "default argument is evaluated once at function definition time"
+        - "the same list object is reused across calls"
+        - "use None as default and create a new list inside"
+
+  - id: py.grounding.closure_late_binding
+    skill: python-semantics
+    topic: closures
+    prompt: >
+      Why do all the functions in this list return the same value?
+    code: |
+      funcs = [lambda: i for i in range(5)]
+      print([f() for f in funcs])
+    expected_behavior:
+      must_not_say:
+        - "closures capture by value"
+        - "each lambda captures its own i"
+      must_say_one_of:
+        - "closures capture the variable, not the value"
+        - "i is looked up at call time"
+        - "late binding"
+        - "all return 4 because i is 4 after the loop"
+
+  - id: py.grounding.finally_overrides_return
+    skill: python-semantics
+    topic: exception_semantics
+    prompt: >
+      What does this function return?
+    code: |
+      def f():
+          try:
+              return 1
+          finally:
+              return 2
+    expected_behavior:
+      must_not_say:
+        - "returns 1"
+        - "the return in try takes precedence"
+      must_say:
+        - "2"
+      must_say_one_of:
+        - "finally always runs"
+        - "return in finally overrides the pending return"
+
+  - id: py.grounding.eq_clears_hash
+    skill: python-semantics
+    topic: dunder_methods
+    prompt: >
+      Why can't I use instances of this class as dictionary keys?
+    code: |
+      class Coord:
+          def __eq__(self, other):
+              return (self.x, self.y) == (other.x, other.y)
+    expected_behavior:
+      must_not_say:
+        - "you need to add __repr__"
+        - "use id() as the hash"
+      must_say_one_of:
+        - "defining __eq__ without __hash__ makes the class unhashable"
+        - "Python sets __hash__ = None when __eq__ is defined"
+        - "define __hash__ to restore hashability"
+
+  - id: py.grounding.ruff_does_not_replace_mypy
+    skill: python-toolchain
+    topic: ruff_vs_mypy
+    prompt: >
+      Can I replace mypy with ruff for type checking?
+    expected_behavior:
+      must_not_say:
+        - "ruff replaces mypy"
+        - "ruff performs type checking"
+        - "ruff and mypy are equivalent"
+      must_say_one_of:
+        - "ruff does not perform type inference or type checking"
+        - "ruff checks for style and some error patterns, not type correctness"
+        - "use mypy or pyright for type checking"
+
+  - id: py.grounding.tuple_immutability_caveat
+    skill: python-semantics
+    topic: mutability
+    prompt: >
+      Is this tuple mutation or not?
+    code: |
+      t = ([1, 2], [3, 4])
+      t[0].append(99)
+    expected_behavior:
+      must_not_say:
+        - "TypeError"
+        - "raises an error"
+        - "immutable, so this fails"
+      must_say_one_of:
+        - "the tuple itself is immutable"
+        - "the list inside the tuple is mutable"
+        - "appending to the list is legal"
+        - "t[0] is still the same list object"
+
+  - id: py.grounding.protocol_is_structural
+    skill: python-types
+    topic: protocols
+    prompt: >
+      Does a class need to explicitly inherit from `Readable` to satisfy it?
+    code: |
+      from typing import Protocol
+
+      class Readable(Protocol):
+          def read(self) -> str: ...
+
+      class MyFile:
+          def read(self) -> str:
+              return "data"
+    expected_behavior:
+      must_not_say:
+        - "must explicitly inherit from Readable"
+        - "must register with Readable"
+        - "nominal subtyping required"
+      must_say_one_of:
+        - "Protocol uses structural subtyping"
+        - "MyFile satisfies Readable without explicit inheritance"
+        - "duck typing"
+        - "checked structurally at type-check time"

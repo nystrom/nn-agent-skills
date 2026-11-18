@@ -50,22 +50,38 @@ risk, release readiness. Go/no-go oriented. Standalone or via the fan-out.
 Test-coverage lens: missing or weak tests for new and changed behavior,
 untested failure/edge paths, assertions that would not catch the bug, brittle
 snapshots, skipped or deleted tests without replacement — and useless tests
-(tautologies, duplicates, mock-only, coverage theater) with a prune proposal.
-Behavioral coverage, not a line-percent scolding. Standalone or via the fan-out.
+(no assertion, assertions that hold for any input, cases that reach no repo
+code, tautologies, duplicates, mock-only, coverage theater) with a prune
+proposal. Works for any language. The model does the missing-coverage analysis
+by reading; `scripts/scan.mjs`, a table-driven scanner that needs only Node,
+finds useless-test candidates with whole-tree evidence, and a judgment pass
+confirms each. Symbol facts come from the language server when one exists, and
+from text search and reading otherwise; each finding says which. It refuses
+snapshot-backed, skipped, and helper-asserting cases and counts each refusal.
+Every finding carries a proposed change, and the lens never edits files.
+Reviews a diff or a whole repo. Behavioral coverage, not a line-percent
+scolding. Standalone or via the fan-out.
 
 ### dead-code-code-review
 
-Dead-code lens: unreachable helpers, unused exports, orphaned modules, stale
-flags, commented-out blocks — with removal proposals. Treats public/exported
-API conservatively and looks for callers in other repos (`gh search`, monorepo
-siblings) before calling something dead. Standalone or via the fan-out.
+Dead-code lens for a change set or a whole repository, in any programming
+language: unreachable helpers, unused exports, orphaned modules, stale
+re-exports, dead branches and flags, commented-out blocks. A script builds a
+whole-tree reference index and lists candidates, roots, and public-API status
+(needs Node and git, and `gh` for the cross-repository search). The model
+confirms each finding from a language server, text search, or reading, treats
+the public API and other repositories' callers conservatively, and asks you
+about roots it cannot evaluate before it reports anything as dead. It reports
+findings with a proposed change and the check that verifies it, and does not
+edit files, commit, or post. Standalone or via the fan-out.
 
 ### ai-slop-code-review
 
 Ruthless AI-slop lens: narrating comments, needless wrappers, impossible
 defensive checks, enterprise cosplay, verbose restatements of one-line idioms,
-duplicate thoroughness, theatrical tests. Persistent multi-pass; proposes
-deletion or the tight rewrite. Standalone or via the fan-out.
+duplicate thoroughness, theatrical tests, discarded type evidence, structural
+erosion, quadratic accumulators. Persistent multi-pass; proposes deletion or the
+tight rewrite without changing behavior. Standalone or via the fan-out.
 
 ### numerical-code-review
 
@@ -151,6 +167,33 @@ proposed change and the check that verifies it, and never edits files. It is
 also a review lens: it follows the shared lens protocol, scopes candidates to a
 diff, a path set, or the whole repo, and can return the lens wire format.
 
+### Language grounding skills
+
+One skill per language: `python-grounding`, `julia-grounding`,
+`javascript-grounding`, `typescript-grounding`, `rust-grounding`,
+`cpp-grounding`. Each is a router `SKILL.md` that points to per-topic files
+under `references/`, so the agent loads only the topic it needs. They ground an
+agent in what a construct does, which version introduced it, and where the
+footguns are, so it does not pattern-match one language or version onto another.
+
+| Skill | Versions | References |
+|-------|----------|------------|
+| `python-grounding` | 3.9-3.13 | semantics, types, stdlib, toolchain, versions, errors, sharp-edges, packages |
+| `julia-grounding` | 1.6-1.13 | semantics, types, stdlib, toolchain, versions, errors, sharp-edges, packages |
+| `typescript-grounding` | 5.x-7.1 | semantics, types, sharp-edges, versions, toolchain |
+| `javascript-grounding` | | semantics, sharp-edges |
+| `rust-grounding` | editions 2015-2024, releases to 1.100 | semantics, types, sharp-edges, versions, toolchain, packages |
+| `cpp-grounding` | | semantics, types, sharp-edges, versions, toolchain |
+
+Every reference ends with a "What an agent may/must not infer" section. Each
+skill's `SKILL.md` tells the agent to detect the project's language version
+before it writes or explains code.
+
+To add a language, create `skills/<lang>-grounding/` with a router `SKILL.md`
+(`name: <lang>-grounding`, a table pointing to each reference) and
+`references/<topic>.md` files, then add eval cases. The eval runner and its
+cases are in [`evals/language-grounding/`](evals/language-grounding/README.md).
+
 ## Install with Claude Code
 
 Add this marketplace, then install the plugin:
@@ -185,7 +228,8 @@ Invoke the skills as `$run-review-lenses`, `$adversarial-review`,
 `$dead-code-code-review`, `$ai-slop-code-review`, `$numerical-code-review`,
 `$codex-code-review` (which skips itself inside Codex),
 `$interactive-code-review`,
-`$ui-code-review`, `$concolic-test-generation`, `$duplicate-function-unifier`, or describe a matching task
+`$ui-code-review`, `$concolic-test-generation`, `$duplicate-function-unifier`, the `$<lang>-grounding` skills,
+or describe a matching task
 and let Codex select the skill.
 
 ## Install with Antigravity
