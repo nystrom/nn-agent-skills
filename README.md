@@ -153,6 +153,23 @@ are characterization tests, written to a separate `*.generated` test file; an
 optional review pass on a stronger model judges whether each pinned behavior is
 correct.
 
+### useless-abstraction-scan
+
+A review lens, also usable on its own, on a change set or a whole repo. Finds
+abstractions that give the reader nothing, in any language: unread ones (a
+field whose comment says it has no effect, a parameter or type with zero
+readers, an options type with no members) and single-use ones (a function,
+class, interface, or wrapper that one place uses, a forwarder, an interface with
+one implementation). The model uses a language server when one is available
+and falls back to text search and reading. Text-based helper scripts (Node 20+,
+no packages) list candidates, count readers and uses, and check whether a symbol
+leaves its package, with `gh search code` for published packages. The model then
+confirms or drops each candidate by reading the code, applies refusal gates
+(seam, public API, named intent, dynamic wiring, tests), and surveys what the
+helpers cannot see. Output is findings, each with its evidence source, a
+judgment, and a proposed change. The skill never edits files. A symbol it
+cannot prove internal is a refusal.
+
 ### duplicate-function-unifier
 
 Finds functions, in any programming language, whose bodies are identical once
@@ -228,7 +245,7 @@ Invoke the skills as `$run-review-lenses`, `$adversarial-review`,
 `$dead-code-code-review`, `$ai-slop-code-review`, `$numerical-code-review`,
 `$codex-code-review` (which skips itself inside Codex),
 `$interactive-code-review`,
-`$ui-code-review`, `$concolic-test-generation`, `$duplicate-function-unifier`, the `$<lang>-grounding` skills,
+`$ui-code-review`, `$concolic-test-generation`, `$useless-abstraction-scan`, `$duplicate-function-unifier`, the `$<lang>-grounding` skills,
 or describe a matching task
 and let Codex select the skill.
 
