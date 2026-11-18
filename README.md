@@ -137,6 +137,33 @@ are characterization tests, written to a separate `*.generated` test file; an
 optional review pass on a stronger model judges whether each pinned behavior is
 correct.
 
+### Language grounding skills
+
+One skill per language: `python-grounding`, `julia-grounding`,
+`javascript-grounding`, `typescript-grounding`, `rust-grounding`,
+`cpp-grounding`. Each is a router `SKILL.md` that points to per-topic files
+under `references/`, so the agent loads only the topic it needs. They ground an
+agent in what a construct does, which version introduced it, and where the
+footguns are, so it does not pattern-match one language or version onto another.
+
+| Skill | Versions | References |
+|-------|----------|------------|
+| `python-grounding` | 3.9-3.13 | semantics, types, stdlib, toolchain, versions, errors, sharp-edges, packages |
+| `julia-grounding` | 1.6-1.13 | semantics, types, stdlib, toolchain, versions, errors, sharp-edges, packages |
+| `typescript-grounding` | 5.x-7.1 | semantics, types, sharp-edges, versions, toolchain |
+| `javascript-grounding` | | semantics, sharp-edges |
+| `rust-grounding` | editions 2015-2024, releases to 1.100 | semantics, types, sharp-edges, versions, toolchain, packages |
+| `cpp-grounding` | | semantics, types, sharp-edges, versions, toolchain |
+
+Every reference ends with a "What an agent may/must not infer" section. Each
+skill's `SKILL.md` tells the agent to detect the project's language version
+before it writes or explains code.
+
+To add a language, create `skills/<lang>-grounding/` with a router `SKILL.md`
+(`name: <lang>-grounding`, a table pointing to each reference) and
+`references/<topic>.md` files, then add eval cases. The eval runner and its
+cases are in [`evals/language-grounding/`](evals/language-grounding/README.md).
+
 ## Install with Claude Code
 
 Add this marketplace, then install the plugin:
@@ -171,7 +198,8 @@ Invoke the skills as `$run-review-lenses`, `$adversarial-review`,
 `$dead-code-code-review`, `$ai-slop-code-review`, `$numerical-code-review`,
 `$codex-code-review` (which skips itself inside Codex),
 `$interactive-code-review`,
-`$ui-code-review`, `$concolic-test-generation`, or describe a matching task
+`$ui-code-review`, `$concolic-test-generation`, the `$<lang>-grounding` skills,
+or describe a matching task
 and let Codex select the skill.
 
 ## Install with Antigravity

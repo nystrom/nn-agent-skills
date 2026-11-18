@@ -1,0 +1,277 @@
+# Evals for Julia 1.12 — new features, semantic changes, and version disambiguation
+#
+# Sources: Julia 1.12 release notes (docs.julialang.org/en/v1.12/NEWS/)
+#
+# Three kinds of cases:
+#
+#   output_prediction — asks what a snippet prints; tests knowledge of 1.12 semantics
+#   version_guard     — asks whether a feature is available in an earlier version
+#   semantic_change   — asks what changed from 1.11 to 1.12
+#
+# Skills exercised: julia/versions, julia/semantics, julia/sharp-edges
+
+cases:
+
+  # ── Semantic changes: behavior that differs from 1.11 ───────────────────────
+
+  - id: jl.112.gcdx_zero_zero
+    kind: output_prediction
+    skill: julia/versions
+    topic: math_semantics
+    version: "1.12"
+    prompt: >
+      What does this print in Julia 1.12?
+    code: |
+      println(gcdx(0, 0))
+    choices:
+      - "(0, 1, 0)"
+      - "(0, 0, 0)"
+      - "(0, 0, 1)"
+    expected_output: "(0, 0, 0)"
+    wrong_output_reason: >
+      "(0, 1, 0)" — the Julia 1.11 and earlier return value.
+      Julia 1.12 changed gcdx(0, 0) to return (0, 0, 0) because the Bézout identity
+      0*0 + 0*0 = 0 is satisfied by (0, 0); the old (0, 1, 0) was mathematically
+      misleading. Code that pattern-matches on the second element being 1 will break.
+
+  - id: jl.112.public_plus_export_error
+    kind: output_prediction
+    skill: julia/versions
+    topic: module_system
+    version: "1.12"
+    prompt: >
+      What happens when this module is loaded in Julia 1.12?
+    code: |
+      module MyPkg
+      export foo
+      public foo
+      function foo() 42 end
+      end
+    choices:
+      - "loads without error; foo is exported"
+      - "loads without error; foo is public but not exported"
+      - "error: a name cannot be both public and exported"
+    expected_output: "error: a name cannot be both public and exported"
+    wrong_output_reason: >
+      "loads without error" — assumes public and export are compatible annotations.
+      Julia 1.12 made it an error to mark the same name as both public and export
+      because export already implies public-ness; having both is redundant and confusing.
+
+  - id: jl.112.fielderror_not_errorexception
+    kind: output_prediction
+    skill: julia/versions
+    topic: error_types
+    version: "1.12"
+    prompt: >
+      What exception type does this raise in Julia 1.12?
+    code: |
+      struct Point
+          x::Float64
+          y::Float64
+      end
+
+      p = Point(1.0, 2.0)
+      try
+          getfield(p, :z)
+      catch e
+          println(typeof(e))
+      end
+    choices:
+      - "ErrorException"
+      - "FieldError"
+      - "KeyError"
+      - "MethodError"
+    expected_output: "FieldError"
+    wrong_output_reason: >
+      "ErrorException" — the behavior before Julia 1.12.
+      Julia 1.12 introduced FieldError as a distinct exception type for failed getfield
+      calls. Code that catches ErrorException to handle bad field access will silently
+      miss FieldError in 1.12.
+
+  - id: jl.112.infinite_loop_not_ub
+    kind: semantic_change
+    skill: julia/versions
+    topic: compiler_semantics
+    version: "1.12"
+    prompt: >
+      In Julia 1.12, is this loop defined behavior?
+    code: |
+      while true
+      end
+    choices:
+      - "undefined behavior — the compiler may optimize it away"
+      - "defined behavior — the loop runs forever"
+      - "error at parse time"
+    expected_output: "defined behavior — the loop runs forever"
+    wrong_output_reason: >
+      "undefined behavior" — prior to 1.12, trivial infinite loops with no side
+      effects could be classified as undefined behavior, allowing the compiler to
+      delete them. Julia 1.12 explicitly defines trivial infinite loops as looping
+      forever, matching programmer intuition.
+
+  - id: jl.112.default_thread_pool
+    kind: semantic_change
+    skill: julia/versions
+    topic: threading
+    version: "1.12"
+    prompt: >
+      In Julia 1.12, when you run `julia` with no `-t` flag, how many threads
+      are started by default?
+    choices:
+      - "1 thread total"
+      - "1 worker thread plus 1 interactive thread (2 total)"
+      - "number of CPU cores"
+    expected_output: "1 worker thread plus 1 interactive thread (2 total)"
+    wrong_output_reason: >
+      "1 thread total" — the pre-1.12 default.
+      Julia 1.12 changed the default to -t1,1: one worker thread and one interactive
+      thread. The interactive threadpool handles the REPL and IO; the worker pool
+      handles @spawn and @threads. Code that assumes Threads.nthreads() == 1 with no
+      -t flag will be wrong on 1.12.
+
+  - id: jl.112.map_inplace_single_arg
+    kind: output_prediction
+    skill: julia/versions
+    topic: array_operations
+    version: "1.12"
+    prompt: >
+      What does this print in Julia 1.12?
+    code: |
+      A = [1, 2, 3]
+      map!(x -> x^2, A)
+      println(A)
+    choices:
+      - "[1, 2, 3] — map! with one array argument is not valid"
+      - "[1, 4, 9]"
+      - "MethodError"
+    expected_output: "[1, 4, 9]"
+    wrong_output_reason: >
+      "MethodError" — in Julia 1.11, map!(f, A) (one array, no separate destination)
+      was not defined. Julia 1.12 added map!(f, A) as sugar for map!(f, A, A),
+      storing the result back in A in-place.
+
+  # ── New APIs: features that do not exist before 1.12 ────────────────────────
+
+  - id: jl.112.insertdims_requires_112
+    kind: version_guard
+    skill: julia/versions
+    topic: array_operations
+    prompt: >
+      Is `insertdims` available in Julia 1.11?
+    code: |
+      A = [1, 2, 3]
+      B = insertdims(A; dims=1)   # expected shape: (1, 3)
+    choices:
+      - "yes"
+      - "no"
+    expected_output: "no"
+    wrong_output_reason: >
+      "yes" — insertdims is the inverse of dropdims and was added in Julia 1.12.
+      In 1.11, reshape(A, 1, :) or similar workarounds are needed.
+
+  - id: jl.112.once_per_process_requires_112
+    kind: version_guard
+    skill: julia/versions
+    topic: concurrency
+    prompt: >
+      Is `OncePerProcess` available in Julia 1.11?
+    code: |
+      const init = OncePerProcess{Vector{Int}}() do
+          expensive_computation()
+      end
+      result = init()
+    choices:
+      - "yes"
+      - "no"
+    expected_output: "no"
+    wrong_output_reason: >
+      "yes" — OncePerProcess, OncePerThread, and OncePerTask were added in Julia 1.12.
+      They provide a thread-safe once-per-scope initialization pattern.
+      In 1.11 the same pattern requires manual locking with a Ref and a ReentrantLock.
+
+  - id: jl.112.waitany_requires_112
+    kind: version_guard
+    skill: julia/versions
+    topic: concurrency
+    prompt: >
+      Is `waitany(tasks)` available in Julia 1.11?
+    code: |
+      t1 = Threads.@spawn slow_operation()
+      t2 = Threads.@spawn fast_operation()
+      first_done = waitany([t1, t2])
+    choices:
+      - "yes"
+      - "no"
+    expected_output: "no"
+    wrong_output_reason: >
+      "yes" — waitany and waitall were added in Julia 1.12. In 1.11, waiting for
+      the first of several tasks to complete requires a manual Channel or condition
+      variable pattern.
+
+  - id: jl.112.fix_type_requires_112
+    kind: version_guard
+    skill: julia/versions
+    topic: stdlib
+    prompt: >
+      Is `Base.Fix` available for partial application in Julia 1.11?
+    code: |
+      add3 = Base.Fix(+, 3)   # partial: add3(x) == 3 + x
+    choices:
+      - "yes"
+      - "no"
+    expected_output: "no"
+    wrong_output_reason: >
+      "yes" — Base.Fix (the generalized form, accepting which argument position to fix)
+      was added in Julia 1.12. Base.Fix1 and Base.Fix2 exist in earlier versions
+      but only fix the first or second argument. Fix generalizes to any position.
+
+  - id: jl.112.isfull_channel_requires_112
+    kind: version_guard
+    skill: julia/versions
+    topic: concurrency
+    prompt: >
+      Is `isfull(c::Channel)` available in Julia 1.11?
+    code: |
+      c = Channel{Int}(4)
+      println(isfull(c))
+    choices:
+      - "yes"
+      - "no"
+    expected_output: "no"
+    wrong_output_reason: >
+      "yes" — isfull was added in Julia 1.12 as a complement to isempty for Channels.
+      In 1.11, checking whether a channel is full requires comparing length(c) to
+      c.sz_max or catching errors.
+
+  - id: jl.112.main_flag_requires_112
+    kind: version_guard
+    skill: julia/versions
+    topic: cli
+    prompt: >
+      Does `julia -m MyPackage` work in Julia 1.11?
+    expected_behavior:
+      must_not_say:
+        - "yes, available in 1.11"
+        - "always available"
+      must_say_one_of:
+        - "the -m/--module flag was added in Julia 1.12"
+        - "not available in 1.11"
+        - "requires Julia 1.12 and a function annotated with @main"
+
+  - id: jl.112.atomic_index_assign_requires_112
+    kind: version_guard
+    skill: julia/versions
+    topic: atomics
+    prompt: >
+      Is this atomic index-assignment syntax valid in Julia 1.11?
+    code: |
+      v = Threads.Atomic{Int}[Threads.Atomic{Int}(0)]
+      @atomic :monotonic v[1] += 4
+    choices:
+      - "yes"
+      - "no"
+    expected_output: "no"
+    wrong_output_reason: >
+      "yes" — the @atomic macro family gained support for reference/index assignment
+      syntax (e.g. @atomic v[i] += n) in Julia 1.12. In 1.11, atomic indexed
+      operations require calling the atomic_add! and similar functions directly.
