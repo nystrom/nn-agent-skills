@@ -64,8 +64,9 @@ siblings) before calling something dead. Standalone or via the fan-out.
 
 Ruthless AI-slop lens: narrating comments, needless wrappers, impossible
 defensive checks, enterprise cosplay, verbose restatements of one-line idioms,
-duplicate thoroughness, theatrical tests. Persistent multi-pass; proposes
-deletion or the tight rewrite. Standalone or via the fan-out.
+duplicate thoroughness, theatrical tests, discarded type evidence, structural
+erosion, quadratic accumulators. Persistent multi-pass; proposes deletion or the
+tight rewrite without changing behavior. Standalone or via the fan-out.
 
 ### numerical-code-review
 

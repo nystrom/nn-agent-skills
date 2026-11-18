@@ -85,6 +85,50 @@ File findings for any of the following. Be concrete; quote the line.
 - String-building noise; intermediate variables used once with no clarity gain
 - Re-implementing what the codebase already has (find the existing helper and
   point at it)
+- Accumulators copied on every step of a fold or loop (spread, concat, or
+  immutable update of a growing collection): quadratic. Mutate a local
+  accumulator or use the bulk constructor
+- Async or future wrappers that re-wrap an already-async call, or `await` of a
+  value returned directly outside a try/catch
+- Hand-rolled null/default coalescing where the language has an operator for it
+
+### Discarded type evidence
+
+Generated code drops type information it had, then guesses it back. Applies in
+any language with a static or gradual type system.
+
+- A value stored through a wider type (`unknown`, `Any`, `Object`, `void*`) and
+  cast back to the type it started as: use the original binding
+- An annotation that erases known structure (a map typed with open keys where
+  the literal's keys are known)
+- A type predicate, `instanceof`, or runtime type check on a value whose static
+  type already says what it is. The check belongs where the data is untrusted
+- Scattered runtime type checks on one untrusted input: parse once at the
+  boundary with the repo's existing validator and pass the typed result on
+- Internal helpers that take or return the top type or an open map when every
+  caller uses one concrete type. Keep the wide type at real boundaries (JSON
+  input, caught exceptions, error causes)
+- Casts or type assertions added to silence the checker, including double casts
+  through a top type: fix or narrow the type
+- A cast that survives review with no stated invariant: require a one-line
+  comment naming the invariant, or narrow or parse instead
+- Conditional construction that omits a field when a value is absent, when no
+  consumer distinguishes an absent field from a null one
+
+### Structural erosion
+
+- A function the change makes worse: new branches added to an already
+  branchy function, a dispatch ladder (`if kind === ... else if ...`, or a
+  `switch` with logic in each case) that a handler map or delegating `switch`
+  would flatten, or several phases (parse, validate, transform, emit) in one
+  function
+- The same branch pair repeated per case (`--flag val` and `--flag=val` for each
+  of N flags): one helper that takes the varying part, or an existing parser
+- Deep nesting that guard clauses and a named loop-body function remove
+- A function extracted from a flagged one that is itself as branchy as the
+  original: the complexity moved, it did not shrink
+
+Report pre-existing hotspots the change does not touch as `low`, not as fixes.
 
 ### Names and API surface
 
@@ -93,6 +137,8 @@ File findings for any of the following. Be concrete; quote the line.
 - Type-stuttering: `UserUserService`, `IUserInterface` without local convention
 - Exported symbols that exist only for the example/tests in the same PR and are
   not used elsewhere
+- Exported functions or types whose contract is the top type or an open map:
+  flag, and leave the signature change to the author
 
 ### Tests as slop
 
@@ -100,6 +146,8 @@ File findings for any of the following. Be concrete; quote the line.
 - Snapshot/golden dumps that lock noise, not behavior
 - Spec names that are essays; arrange blocks larger than the behavior
 - Copy-pasted cases that do not change the assertion
+- New tests that mock a module instead of injecting the dependency: flag, and
+  leave the redesign to the author
 
 ### Consistency tells (ruthless heuristics)
 
@@ -136,6 +184,11 @@ Every finding must:
 3. Say what to do: **delete**, **inline**, **replace with X** (existing util or
    one-liner), or **rename to Y**.
 4. Prefer the smallest diff that removes the weight.
+5. Preserve behavior. Do not propose a rewrite that changes exported
+   signatures, error messages or types, output formats, side-effect order, or
+   await sequencing. If the only tight rewrite changes behavior, say so in the
+   finding and propose deletion of the weight that is safe, or flag it without a
+   rewrite.
 
 Severity:
 
