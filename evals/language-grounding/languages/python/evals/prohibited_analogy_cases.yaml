@@ -1,0 +1,247 @@
+# Evals for Python semantic grounding — adversarial output prediction
+#
+# Design: each prompt shows code and asks what it outputs or does.
+# No other language is named. The wrong answer is the one an agent produces
+# when it pattern-matches to a superficially similar language instead of
+# applying Python's actual semantics.
+#
+# Correct answers require knowing:
+#   - assignment binds names, not copies values
+#   - closures capture variables by reference (late binding)
+#   - assignment anywhere in a function makes the name local for the whole function
+#   - augmented assignment on mutable vs immutable types differs
+#   - `is` tests identity, not equality
+#   - `finally` return overrides try return
+#   - class body is not an enclosing scope for nested defs
+#   - __eq__ without __hash__ makes the type unhashable
+#
+# Skills exercised: python-semantics, python-sharp-edges
+
+cases:
+
+  - id: py.output.shared_list_alias
+    skill: python-semantics
+    topic: assignment_semantics
+    prompt: >
+      What does this program print?
+    code: |
+      a = [1, 2, 3]
+      b = a
+      b.append(4)
+      print(a)
+    choices:
+      - "[1, 2, 3]"
+      - "[1, 2, 3, 4]"
+      - "error"
+    expected_output: "[1, 2, 3, 4]"
+    wrong_output_reason: >
+      "[1, 2, 3]" — assumes assignment copies the list (value semantics).
+      Python assignment binds names to objects; b and a refer to the same list.
+
+  - id: py.output.closure_loop_late_binding
+    skill: python-semantics
+    topic: closures
+    prompt: >
+      What does this program print?
+    code: |
+      funcs = []
+      for i in range(3):
+          funcs.append(lambda: i)
+      print([f() for f in funcs])
+    choices:
+      - "[0, 1, 2]"
+      - "[2, 2, 2]"
+      - "[0, 0, 0]"
+      - "error"
+    expected_output: "[2, 2, 2]"
+    wrong_output_reason: >
+      "[0, 1, 2]" — assumes closures capture the value of i at definition time.
+      Python closures capture the variable; all three lambdas read i after the loop,
+      where i == 2.
+
+  - id: py.output.unbound_local_trap
+    skill: python-semantics
+    topic: scoping
+    prompt: >
+      What does this program print?
+    code: |
+      x = 10
+
+      def f():
+          print(x)
+          x = 20
+
+      f()
+    choices:
+      - "10"
+      - "20"
+      - "UnboundLocalError"
+      - "NameError"
+    expected_output: "UnboundLocalError"
+    wrong_output_reason: >
+      "10" — assumes x resolves to the global because the print comes before
+      the assignment. Python marks x local for the entire function body as soon
+      as it sees the assignment, so the read before assignment raises UnboundLocalError.
+
+  - id: py.output.augmented_assign_list_identity
+    skill: python-semantics
+    topic: assignment_semantics
+    prompt: >
+      What does this program print?
+    code: |
+      a = [1, 2]
+      b = a
+      b += [3]
+      print(a)
+      print(b is a)
+    choices:
+      - "[1, 2]\nFalse"
+      - "[1, 2, 3]\nTrue"
+      - "[1, 2]\nTrue"
+      - "[1, 2, 3]\nFalse"
+    expected_output: "[1, 2, 3]\nTrue"
+    wrong_output_reason: >
+      "[1, 2]\nFalse" — assumes += on a list rebinds b to a new list (as it does
+      for tuples and other immutables). list.__iadd__ mutates in place; b and a
+      still refer to the same object.
+
+  - id: py.output.augmented_assign_tuple_rebind
+    skill: python-semantics
+    topic: assignment_semantics
+    prompt: >
+      What does this program print?
+    code: |
+      a = (1, 2)
+      b = a
+      b += (3,)
+      print(a)
+      print(b is a)
+    choices:
+      - "(1, 2, 3)\nTrue"
+      - "(1, 2)\nFalse"
+      - "(1, 2, 3)\nFalse"
+      - "TypeError"
+    expected_output: "(1, 2)\nFalse"
+    wrong_output_reason: >
+      "(1, 2, 3)\nTrue" — assumes += on a tuple mutates in place like a list.
+      Tuples are immutable; += creates a new tuple and rebinds b, leaving a unchanged.
+
+  - id: py.output.mutable_default_persists
+    skill: python-sharp-edges
+    topic: mutable_defaults
+    prompt: >
+      What does this program print?
+    code: |
+      def push(val, stack=[]):
+          stack.append(val)
+          return stack
+
+      print(push(1))
+      print(push(2))
+      print(push(3))
+    choices:
+      - "[1]\n[2]\n[3]"
+      - "[1]\n[1, 2]\n[1, 2, 3]"
+      - "error on second call"
+    expected_output: "[1]\n[1, 2]\n[1, 2, 3]"
+    wrong_output_reason: >
+      "[1]\n[2]\n[3]" — assumes a fresh empty list is created on each call.
+      The default argument is evaluated once at function definition time;
+      the same list object accumulates values across all calls.
+
+  - id: py.output.finally_return_wins
+    skill: python-semantics
+    topic: exception_semantics
+    prompt: >
+      What does this program print?
+    code: |
+      def f():
+          try:
+              return 1
+          finally:
+              return 2
+
+      print(f())
+    choices:
+      - "1"
+      - "2"
+      - "error"
+    expected_output: "2"
+    wrong_output_reason: >
+      "1" — assumes the try return takes effect before finally runs.
+      Python's finally always executes; a return inside finally overrides any
+      pending return from the try block.
+
+  - id: py.output.class_body_not_enclosing_scope
+    skill: python-semantics
+    topic: scoping
+    prompt: >
+      What does this program print?
+    code: |
+      y = "global"
+
+      class C:
+          y = "class"
+          vals = [y for _ in range(3)]
+
+      print(C.vals)
+    choices:
+      - "['class', 'class', 'class']"
+      - "['global', 'global', 'global']"
+      - "NameError"
+    expected_output: "['global', 'global', 'global']"
+    wrong_output_reason: >
+      "['class', 'class', 'class']" — assumes the list comprehension looks up y
+      in the class body. Comprehensions have their own scope and do not see class-body
+      names; y resolves to the global.
+    note: >
+      In Python 2, list comprehensions leaked into the enclosing scope, so this
+      would have produced the class-body value. Python 3 changed this.
+
+  - id: py.output.eq_without_hash
+    skill: python-semantics
+    topic: dunder_methods
+    prompt: >
+      What does this program print?
+    code: |
+      class Point:
+          def __init__(self, x, y):
+              self.x, self.y = x, y
+          def __eq__(self, other):
+              return self.x == other.x and self.y == other.y
+
+      seen = set()
+      seen.add(Point(1, 2))
+    choices:
+      - "runs without error"
+      - "TypeError: unhashable type"
+      - "AttributeError"
+    expected_output: "TypeError: unhashable type: 'Point'"
+    wrong_output_reason: >
+      "runs without error" — assumes defining __eq__ does not affect hashability.
+      Python sets __hash__ = None when __eq__ is defined without __hash__,
+      making the type unhashable and unusable in sets or as dict keys.
+
+  - id: py.output.is_identity_not_equality
+    skill: python-sharp-edges
+    topic: identity_vs_equality
+    prompt: >
+      Which of these is guaranteed to print True?
+    code: |
+      a = 500
+      b = 500
+
+      print(a == b)   # line A
+      print(a is b)   # line B
+    choices:
+      - "both A and B"
+      - "only A"
+      - "only B"
+      - "neither"
+    expected_output: "only A"
+    wrong_output_reason: >
+      "both A and B" — assumes is and == are equivalent for equal values.
+      == calls __eq__ and is always True for equal integers.
+      is tests object identity; CPython caches small integers but 500 is
+      outside the guaranteed range, so is may return False.
+      The language specification does not guarantee a is b for any integer value.

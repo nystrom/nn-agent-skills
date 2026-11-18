@@ -1,0 +1,158 @@
+# Evals for unsupported claim detection
+# Tests that an agent does NOT assert Python behavior beyond what the language
+# specification or available context supports.
+#
+# These cases look like they invite confident answers but the correct response
+# must qualify the claim or identify the dependency on runtime/version/impl details.
+#
+# Skills exercised: python-semantics, python-sharp-edges, python-types, python-versions
+
+cases:
+
+  - id: py.unsupported.dict_ordering_pre39
+    skill: python-versions
+    topic: dict_semantics
+    prompt: >
+      Will iterating over a dict in Python 3.6 always return keys in insertion order?
+    expected_behavior:
+      must_not_say:
+        - "yes, always guaranteed"
+        - "guaranteed by the language"
+      must_say_one_of:
+        - "CPython 3.6 preserves order as an implementation detail"
+        - "guaranteed by the language spec only from 3.7"
+        - "not guaranteed in 3.6 by the language specification"
+
+  - id: py.unsupported.int_caching_range
+    skill: python-sharp-edges
+    topic: integer_caching
+    prompt: >
+      Will `a is b` return `True` here?
+    code: |
+      a = 1000
+      b = 1000
+      print(a is b)
+    expected_behavior:
+      must_not_say:
+        - "always True"
+        - "always False"
+        - "True because integers are cached"
+      must_say_one_of:
+        - "CPython caches small integers"
+        - "1000 is outside the guaranteed cache range"
+        - "implementation-defined"
+        - "not guaranteed by the language"
+
+  - id: py.unsupported.gc_timing
+    skill: python-semantics
+    topic: memory_management
+    prompt: >
+      When will the memory for this list be freed?
+    code: |
+      def f():
+          data = list(range(10_000_000))
+    expected_behavior:
+      must_not_say:
+        - "immediately when f returns"
+        - "when the GC runs at the end of the program"
+        - "deterministically freed"
+      must_say_one_of:
+        - "CPython: when reference count drops to zero"
+        - "other implementations: timing depends on the GC"
+        - "not specified by the language"
+
+  - id: py.unsupported.overload_runtime_dispatch
+    skill: python-types
+    topic: overloads
+    prompt: >
+      Does `@overload` make Python dispatch to different implementations based on argument type?
+    code: |
+      from typing import overload
+
+      @overload
+      def f(x: int) -> int: ...
+      @overload
+      def f(x: str) -> str: ...
+      def f(x):
+          return x
+    expected_behavior:
+      must_not_say:
+        - "dispatches at runtime"
+        - "calls different functions based on type"
+        - "runtime multiple dispatch"
+      must_say_one_of:
+        - "@overload is for type checkers only"
+        - "no runtime dispatch"
+        - "only one implementation is called at runtime"
+        - "the non-decorated implementation runs for all types"
+
+  - id: py.unsupported.thread_safety_dict
+    skill: python-semantics
+    topic: concurrency
+    prompt: >
+      Is it safe to write to a shared dict from multiple threads simultaneously?
+    expected_behavior:
+      must_not_say:
+        - "always safe"
+        - "dicts are thread-safe"
+        - "guaranteed safe in all Python implementations"
+      must_say_one_of:
+        - "CPython's GIL provides some protection for simple operations"
+        - "compound operations are not atomic"
+        - "not guaranteed thread-safe by the language spec"
+        - "use threading.Lock for safety"
+
+  - id: py.unsupported.annotation_evaluation_order
+    skill: python-types
+    topic: annotation_evaluation
+    prompt: >
+      Are annotations evaluated at class definition time in Python 3.10?
+    code: |
+      class Node:
+          def children(self) -> list[Node]:   # forward reference
+              return []
+    expected_behavior:
+      must_not_say:
+        - "always evaluated eagerly"
+        - "always lazy in 3.10"
+        - "PEP 563 is enabled by default in 3.10"
+      must_say_one_of:
+        - "eager by default unless from __future__ import annotations is present"
+        - "PEP 563 deferred evaluation requires the future import"
+        - "PEP 649 lazy semantics not yet default in 3.10"
+
+  - id: py.unsupported.walrus_scope
+    skill: python-semantics
+    topic: walrus_operator
+    prompt: >
+      What is the scope of `n` after this comprehension finishes?
+    code: |
+      results = [n := f(x) for x in data if n > 0]
+    expected_behavior:
+      must_not_say:
+        - "n is scoped to the comprehension"
+        - "n is not accessible outside"
+      must_say_one_of:
+        - "walrus operator leaks into the enclosing scope"
+        - "n is visible in the enclosing function or module"
+        - "unlike the iteration variable, := escapes the comprehension"
+
+  - id: py.unsupported.class_body_scope
+    skill: python-semantics
+    topic: scoping
+    prompt: >
+      Can the default argument of a method refer to a name defined earlier in the class body?
+    code: |
+      class C:
+          default = 42
+          def f(self, x=default):
+              return x
+    expected_behavior:
+      must_not_say:
+        - "always works"
+        - "x defaults to 42 regardless of where default is used"
+      must_say_one_of:
+        - "class body is not an enclosing scope for method defaults"
+        - "default argument is evaluated in the enclosing scope, not the class body"
+        - "this works because default is evaluated at class-body execution time"
+        - "but accessing default inside the method body via name lookup would fail"

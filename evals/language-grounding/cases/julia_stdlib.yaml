@@ -1,0 +1,137 @@
+# Evals for julia/stdlib skill
+# Tests that an agent knows Base vs stdlib package APIs, the mutation convention (!),
+# what requires `using`, and what is NOT in the standard library.
+#
+# Skills exercised: julia/stdlib
+
+cases:
+
+  - id: jl.stdlib.string_concat_star
+    skill: julia/stdlib
+    topic: string_api
+    prompt: >
+      What is the correct way to concatenate two strings in Julia?
+    code: |
+      a = "Hello"
+      b = "World"
+      result = a + b   # is this correct?
+    choices:
+      - "Yes — + concatenates strings in Julia"
+      - "No — use a * b"
+      - "No — use string(a, b) or join([a, b])"
+      - "Both B and C are correct"
+    expected_output: "Both B and C are correct"
+    wrong_output_reason: >
+      "Yes — + concatenates strings" — In Julia, string concatenation uses * not +.
+      `a + b` raises a MethodError. Both `a * b` and `string(a, b)` are valid.
+
+  - id: jl.stdlib.push_not_push_bang
+    skill: julia/stdlib
+    topic: array_mutation
+    prompt: >
+      A developer writes `push(v, x)` to add an element to a vector. What is wrong?
+    code: |
+      v = [1, 2, 3]
+      push(v, 4)
+    expected_behavior:
+      must_not_say:
+        - "works correctly"
+        - "push exists in Julia"
+        - "adds 4 to v"
+      must_say_one_of:
+        - "push!"
+        - "! suffix"
+        - "UndefVarError"
+        - "mutation functions end in !"
+
+  - id: jl.stdlib.mean_requires_using
+    skill: julia/stdlib
+    topic: statistics_stdlib
+    prompt: >
+      Why does this Julia code raise an error, and what is the fix?
+    code: |
+      v = [1.0, 2.0, 3.0, 4.0, 5.0]
+      println(mean(v))
+    expected_behavior:
+      must_not_say:
+        - "mean is in Base"
+        - "no import needed"
+        - "works without any import"
+      must_say_one_of:
+        - "using Statistics"
+        - "Statistics stdlib"
+        - "Statistics package"
+        - "not in Base"
+
+  - id: jl.stdlib.http_not_stdlib
+    skill: julia/stdlib
+    topic: third_party
+    prompt: >
+      Is HTTP available in Julia without installing any packages?
+    expected_behavior:
+      must_not_say:
+        - "yes, HTTP is in the standard library"
+        - "using HTTP works out of the box"
+        - "HTTP is built into Julia"
+      must_say_one_of:
+        - "HTTP.jl"
+        - "third-party"
+        - "Pkg.add"
+        - "not in stdlib"
+
+  - id: jl.stdlib.sort_vs_sort_bang
+    skill: julia/stdlib
+    topic: mutation_convention
+    prompt: >
+      What is the difference between `sort(v)` and `sort!(v)` in Julia?
+    expected_behavior:
+      must_say_one_of:
+        - "sort returns a new"
+        - "sort! modifies in place"
+        - "sort! mutates"
+        - "! suffix means in-place"
+
+  - id: jl.stdlib.one_based_eachindex
+    skill: julia/stdlib
+    topic: indexing
+    prompt: >
+      What is the idiomatic way to iterate over the indices of a Julia array?
+    code: |
+      v = [10, 20, 30, 40]
+      # how to iterate indices?
+    expected_behavior:
+      must_say_one_of:
+        - "eachindex(v)"
+        - "1:length(v)"
+        - "axes(v, 1)"
+
+  - id: jl.stdlib.json_not_stdlib
+    skill: julia/stdlib
+    topic: third_party
+    prompt: >
+      How do I parse a JSON string in Julia?
+    expected_behavior:
+      must_not_say:
+        - "using Base.JSON"
+        - "JSON is in the standard library"
+        - "import Stdlib.JSON"
+      must_say_one_of:
+        - "JSON3.jl"
+        - "JSON.jl"
+        - "Pkg.add"
+        - "third-party"
+
+  - id: jl.stdlib.dict_safe_access
+    skill: julia/stdlib
+    topic: dict_api
+    prompt: >
+      How do you safely access a Dict key in Julia without risking a KeyError?
+    code: |
+      d = Dict("a" => 1, "b" => 2)
+      val = d["c"]   # KeyError
+    expected_behavior:
+      must_say_one_of:
+        - "get(d, \"c\", default)"
+        - "get(d, \"c\","
+        - "haskey"
+        - "get!"

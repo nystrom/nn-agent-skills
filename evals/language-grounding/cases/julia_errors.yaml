@@ -1,0 +1,162 @@
+# Evals for julia/errors skill
+# Tests that an agent correctly diagnoses Julia exceptions — particularly MethodError,
+# BoundsError, silent overflow, and boolean context errors.
+#
+# Skills exercised: julia/errors
+
+cases:
+
+  - id: jl.errors.string_concat_methoderror
+    skill: julia/errors
+    topic: method_error_string
+    prompt: >
+      Why does this Julia code raise a MethodError?
+    code: |
+      greeting = "Hello" + " World"
+    expected_behavior:
+      must_not_say:
+        - "works in Julia"
+        - "concatenates the strings"
+        - "use join() instead"
+      must_say_one_of:
+        - "* not +"
+        - "concatenation uses *"
+        - "MethodError"
+        - "no method matching +(::String"
+
+  - id: jl.errors.bounds_zero_index
+    skill: julia/errors
+    topic: bounds_error_indexing
+    prompt: >
+      What error does this produce and why?
+    code: |
+      v = [10, 20, 30]
+      println(v[0])
+    choices:
+      - "10 (first element)"
+      - "BoundsError: 0-indexed access"
+      - "20 (0 is treated as 1)"
+      - "MethodError"
+    expected_output: "BoundsError"
+    wrong_output_reason: >
+      "10" — assumes 0-based indexing as in Python/C. Julia arrays are 1-indexed.
+      v[0] is out of bounds and raises BoundsError.
+
+  - id: jl.errors.overflow_silent
+    skill: julia/errors
+    topic: integer_overflow
+    prompt: >
+      Does this Julia code raise an OverflowError?
+    code: |
+      x = typemax(Int64) + 1
+      println(x)
+    choices:
+      - "Yes — OverflowError is thrown"
+      - "No — result wraps silently to typemin(Int64)"
+      - "No — result promotes to BigInt automatically"
+      - "Yes — InexactError is thrown"
+    expected_output: "No — result wraps silently to typemin(Int64)"
+    wrong_output_reason: >
+      "Yes — OverflowError is thrown" or "promotes to BigInt" — Julia integers
+      overflow silently with wrap-around like C, not like Python. No exception is raised
+      from arithmetic. OverflowError only occurs in explicit conversion functions.
+
+  - id: jl.errors.nonboolean_context
+    skill: julia/errors
+    topic: type_error_boolean
+    prompt: >
+      What error does this produce and how do you fix it?
+    code: |
+      x = 5
+      if x
+          println("positive")
+      end
+    expected_behavior:
+      must_not_say:
+        - "prints 'positive'"
+        - "works in Julia"
+        - "non-zero is truthy"
+      must_say_one_of:
+        - "TypeError: non-boolean"
+        - "non-boolean (Int64) used in boolean context"
+        - "if x != 0"
+        - "if x > 0"
+        - "explicit comparison"
+
+  - id: jl.errors.method_ambiguity_fix
+    skill: julia/errors
+    topic: method_ambiguity
+    prompt: >
+      This code defines two methods and then raises a MethodError when called with two Ints.
+      What is the fix?
+    code: |
+      f(x::Int, y) = "first"
+      f(x, y::Int) = "second"
+
+      f(1, 1)   # MethodError: ambiguous
+    expected_behavior:
+      must_not_say:
+        - "remove one of the methods"
+        - "this is not ambiguous"
+        - "use a try/catch"
+      must_say_one_of:
+        - "add a more specific method"
+        - "f(x::Int, y::Int)"
+        - "define f for both Int arguments"
+        - "disambiguation"
+
+  - id: jl.errors.inexact_float_to_int
+    skill: julia/errors
+    topic: inexact_error
+    prompt: >
+      What does this Julia code produce?
+    code: |
+      x = Int(3.7)
+    choices:
+      - "3 (truncates)"
+      - "4 (rounds)"
+      - "InexactError"
+      - "3.7 unchanged"
+    expected_output: "InexactError"
+    wrong_output_reason: >
+      "3 (truncates)" — assumes Int() truncates like C casting. Julia's Int() requires
+      exact representability. 3.7 cannot be exactly represented as an integer, so
+      InexactError is thrown. Use floor(Int, 3.7) or round(Int, 3.7) instead.
+
+  - id: jl.errors.undef_var_soft_scope
+    skill: julia/errors
+    topic: undef_var_scope
+    prompt: >
+      This script (run as a file, not in the REPL) raises UndefVarError on the for loop variable.
+      Why, and what is the fix?
+    code: |
+      total = 0
+      for i in 1:5
+          total += i
+      end
+      println(total)
+    expected_behavior:
+      must_not_say:
+        - "total is 15"
+        - "works in all contexts"
+        - "use global inside the loop"
+      must_say_one_of:
+        - "soft scope"
+        - "global total"
+        - "script vs REPL"
+        - "loop body cannot write to outer variable"
+
+  - id: jl.errors.load_error_wraps
+    skill: julia/errors
+    topic: load_error
+    prompt: >
+      When Julia shows a LoadError, where should you look for the actual problem?
+    expected_behavior:
+      must_not_say:
+        - "the LoadError message contains the full information"
+        - "LoadError is the root error"
+      must_say_one_of:
+        - "caused by"
+        - "inner exception"
+        - "LoadError wraps"
+        - "look at the error after LoadError"

@@ -1,0 +1,88 @@
+# Evals for Julia version disambiguation
+# Tests that an agent correctly identifies which Julia version introduced a feature
+# and does not silently apply syntax or semantics from the wrong version.
+#
+# Skills exercised: julia/versions
+
+cases:
+
+  - id: jl.version.package_extensions_require_19
+    skill: julia/versions
+    topic: package_extensions
+    prompt: >
+      Is the [extensions] section in Project.toml available in Julia 1.8?
+    expected_behavior:
+      must_not_say:
+        - "available in 1.8"
+        - "always available"
+      must_say_one_of:
+        - "requires Julia 1.9"
+        - "not available in 1.8; use Requires.jl instead"
+        - "introduced in 1.9"
+
+  - id: jl.version.typed_globals_require_18
+    skill: julia/versions
+    topic: typed_globals
+    prompt: >
+      Is this valid Julia 1.7?
+    code: |
+      x::Int = 0
+    expected_behavior:
+      must_not_say:
+        - "valid in 1.7"
+        - "always valid"
+      must_say_one_of:
+        - "type declarations for globals added in Julia 1.8"
+        - "not valid in 1.7"
+        - "requires Julia 1.8"
+
+  - id: jl.version.public_keyword_require_111
+    skill: julia/versions
+    topic: public_keyword
+    prompt: >
+      Is the `public` keyword available in Julia 1.10?
+    code: |
+      module MyMod
+      public foo
+      end
+    expected_behavior:
+      must_not_say:
+        - "available in 1.10"
+        - "always available"
+      must_say_one_of:
+        - "introduced in Julia 1.11"
+        - "not available in 1.10"
+
+  - id: jl.version.memory_require_110
+    skill: julia/versions
+    topic: memory_type
+    prompt: >
+      Is `Memory{T}` available in Julia 1.9?
+    expected_behavior:
+      must_not_say:
+        - "always available"
+        - "available in 1.9"
+      must_say_one_of:
+        - "introduced in Julia 1.10"
+        - "not available in 1.9"
+
+  - id: jl.version.cartesianindex_broadcast_require_19
+    skill: julia/versions
+    topic: broadcasting
+    prompt: >
+      Did Julia 1.6 support package extensions natively?
+    expected_behavior:
+      must_say_one_of:
+        - "no, extensions were added in 1.9"
+        - "Requires.jl was the workaround before 1.9"
+
+  - id: jl.version.task_local_storage
+    skill: julia/versions
+    topic: concurrency
+    prompt: >
+      Are task-local RNG states (per-task random state) guaranteed in Julia 1.6?
+    expected_behavior:
+      must_say_one_of:
+        - "per-task RNG was introduced in Julia 1.7"
+        - "not guaranteed in 1.6"
+        - "1.6 uses a global RNG; 1.7+ uses per-task RNG"

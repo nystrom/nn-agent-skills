@@ -1,0 +1,176 @@
+# Evals for python/errors skill
+# Tests that an agent correctly diagnoses Python exceptions and knows
+# correct method names — without hallucinating methods from other languages.
+#
+# Skills exercised: python/errors
+
+cases:
+
+  - id: py.errors.list_add_not_exist
+    skill: python/errors
+    topic: attribute_error
+    prompt: >
+      A developer writes the following code. Will it work? If not, what is wrong and what is the fix?
+    code: |
+      items = [1, 2, 3]
+      items.add(4)
+    expected_behavior:
+      must_not_say:
+        - "works correctly"
+        - "valid Python"
+        - "adds 4 to the list"
+      must_say_one_of:
+        - "AttributeError"
+        - "no attribute 'add'"
+        - "append"
+
+  - id: py.errors.nonetype_not_subscriptable
+    skill: python/errors
+    topic: type_error_none
+    prompt: >
+      What is the root cause of this error and where should the fix be applied?
+    code: |
+      result = some_function()
+      value = result["key"]
+      # TypeError: 'NoneType' object is not subscriptable
+    expected_behavior:
+      must_not_say:
+        - "fix the subscript syntax"
+        - "use get() instead"
+        - "the dict is empty"
+      must_say_one_of:
+        - "some_function() returned None"
+        - "function returned None"
+        - "upstream"
+        - "returns None"
+
+  - id: py.errors.importerror_typealias
+    skill: python/errors
+    topic: import_error
+    prompt: >
+      This code runs on Python 3.9 and raises `ImportError: cannot import name 'TypeAlias' from 'typing'`.
+      What is the fix?
+    code: |
+      from typing import TypeAlias
+
+      Vector: TypeAlias = list[float]
+    expected_behavior:
+      must_not_say:
+        - "TypeAlias is available in all versions"
+        - "change the import to typing_extensions is wrong"
+        - "use typing.Type instead"
+      must_say_one_of:
+        - "typing_extensions"
+        - "Python 3.10"
+        - "added in 3.10"
+
+  - id: py.errors.unbound_local_cause
+    skill: python/errors
+    topic: unbound_local_error
+    prompt: >
+      Why does this raise UnboundLocalError even though `x` is defined at module level?
+    code: |
+      x = 10
+
+      def f():
+          print(x)
+          x = 20
+
+      f()
+    expected_behavior:
+      must_not_say:
+        - "x is not defined"
+        - "the global x is used"
+        - "reads the global x before assigning"
+      must_say_one_of:
+        - "local variable"
+        - "assignment anywhere in the function"
+        - "makes x local for the entire function"
+        - "Python marks x as local"
+
+  - id: py.errors.coroutine_never_awaited
+    skill: python/errors
+    topic: async_warning
+    prompt: >
+      This code runs but produces a RuntimeWarning and `result` is not what was expected.
+      What is the bug?
+    code: |
+      async def fetch(url):
+          return "data"
+
+      result = fetch("http://example.com")
+    expected_behavior:
+      must_not_say:
+        - "fetch() is called correctly"
+        - "result contains the data"
+        - "the URL is wrong"
+      must_say_one_of:
+        - "coroutine was never awaited"
+        - "missing await"
+        - "returns a coroutine"
+        - "asyncio.run"
+
+  - id: py.errors.stop_iteration_in_generator
+    skill: python/errors
+    topic: stop_iteration_generator
+    prompt: >
+      In Python 3.7+, what happens when StopIteration is raised inside a generator?
+    code: |
+      def inner():
+          raise StopIteration
+
+      def gen():
+          inner()
+          yield 1
+
+      list(gen())
+    choices:
+      - "The generator stops normally and returns []"
+      - "RuntimeError: generator raised StopIteration"
+      - "StopIteration propagates to the caller of list()"
+      - "Yields [1] because the exception is caught"
+    expected_output: "RuntimeError: generator raised StopIteration"
+    wrong_output_reason: >
+      "The generator stops normally" — assumes StopIteration inside a generator
+      is treated as a clean stop signal. PEP 479 (Python 3.7+) converts StopIteration
+      raised inside a generator into RuntimeError to prevent accidental silent truncation.
+
+  - id: py.errors.dict_get_default
+    skill: python/errors
+    topic: attribute_error
+    prompt: >
+      A developer from a Java background writes this. What is wrong?
+    code: |
+      config = {"host": "localhost", "port": 5432}
+      db = config.get_default("database", "mydb")
+    expected_behavior:
+      must_not_say:
+        - "works correctly"
+        - "returns 'mydb' as expected"
+        - "get_default is valid"
+      must_say_one_of:
+        - "AttributeError"
+        - "get_default does not exist"
+        - "config.get(\"database\", \"mydb\")"
+        - "dict.get"
+
+  - id: py.errors.notimplemented_vs_notimplementederror
+    skill: python/errors
+    topic: notimplemented
+    prompt: >
+      What is wrong with this abstract base class implementation?
+    code: |
+      class Shape:
+          def area(self):
+              return NotImplemented
+    expected_behavior:
+      must_not_say:
+        - "this is correct"
+        - "that is correct"
+        - "NotImplemented is the correct choice"
+        - "using NotImplemented is the right approach"
+      must_say_one_of:
+        - "NotImplementedError"
+        - "raise NotImplementedError"
+        - "NotImplemented is for binary operators"
+        - "should raise, not return"

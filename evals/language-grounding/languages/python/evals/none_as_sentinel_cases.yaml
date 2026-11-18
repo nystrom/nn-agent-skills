@@ -1,0 +1,241 @@
+# Evals for None-as-sentinel pattern and related mistakes
+#
+# The canonical Python pattern for optional mutable defaults is:
+#
+#   def f(items=None):
+#       if items is None:
+#           items = []
+#
+# These cases test whether an agent knows:
+#   - why None is used instead of [] or {} as a default
+#   - what goes wrong when you use a mutable default directly
+#   - that `if not items` incorrectly treats [] and None the same way
+#   - that `if items is None` is the right check, not `if not items`
+#   - that passing an empty list should not trigger the default-init path
+#   - that None is a singleton; is/is not is the correct test
+#
+# Skills exercised: python-semantics, python-sharp-edges
+
+cases:
+
+  - id: py.none.mutable_default_shared_state
+    skill: python-sharp-edges
+    topic: mutable_defaults
+    prompt: >
+      What does this program print?
+    code: |
+      def collect(item, result=[]):
+          result.append(item)
+          return result
+
+      a = collect("x")
+      b = collect("y")
+      print(a)
+      print(b)
+      print(a is b)
+    choices:
+      - "['x']\n['y']\nFalse"
+      - "['x', 'y']\n['x', 'y']\nTrue"
+      - "['x']\n['x', 'y']\nFalse"
+    expected_output: "['x', 'y']\n['x', 'y']\nTrue"
+    wrong_output_reason: >
+      "['x']\n['y']\nFalse" — assumes each call gets a fresh empty list.
+      The default [] is evaluated once at definition time; every call that
+      omits result receives the same list object.
+
+  - id: py.none.none_sentinel_fixes_shared_state
+    skill: python-sharp-edges
+    topic: mutable_defaults
+    prompt: >
+      What does this program print?
+    code: |
+      def collect(item, result=None):
+          if result is None:
+              result = []
+          result.append(item)
+          return result
+
+      a = collect("x")
+      b = collect("y")
+      print(a)
+      print(b)
+      print(a is b)
+    choices:
+      - "['x', 'y']\n['x', 'y']\nTrue"
+      - "['x']\n['y']\nFalse"
+      - "['x', 'y']\n['y']\nFalse"
+    expected_output: "['x']\n['y']\nFalse"
+    wrong_output_reason: >
+      "['x', 'y']\n['x', 'y']\nTrue" — assumes the None pattern has the same
+      problem as a mutable default. It does not: each call creates a new local list
+      and binds result to it, so a and b are independent objects.
+
+  - id: py.none.not_items_treats_empty_as_none
+    skill: python-semantics
+    topic: none_vs_empty
+    prompt: >
+      What does this program print?
+    code: |
+      def process(items=None):
+          if not items:
+              items = ["default"]
+          return items
+
+      print(process())
+      print(process(None))
+      print(process([]))
+      print(process([1, 2]))
+    choices:
+      - "['default']\n['default']\n[]\n[1, 2]"
+      - "['default']\n['default']\n['default']\n[1, 2]"
+      - "['default']\n[]\n[]\n[1, 2]"
+    expected_output: "['default']\n['default']\n['default']\n[1, 2]"
+    wrong_output_reason: >
+      "['default']\n['default']\n[]\n[1, 2]" — assumes `not items` distinguishes
+      None from []. Both None and [] are falsy, so `if not items` replaces an
+      explicitly passed empty list with the default. The caller's intent is lost.
+      Use `if items is None` to guard only the absent case.
+
+  - id: py.none.is_none_preserves_empty_list
+    skill: python-semantics
+    topic: none_vs_empty
+    prompt: >
+      What does this program print?
+    code: |
+      def process(items=None):
+          if items is None:
+              items = ["default"]
+          return items
+
+      print(process())
+      print(process(None))
+      print(process([]))
+      print(process([1, 2]))
+    choices:
+      - "['default']\n['default']\n['default']\n[1, 2]"
+      - "['default']\n['default']\n[]\n[1, 2]"
+      - "['default']\n[]\n[]\n[1, 2]"
+    expected_output: "['default']\n['default']\n[]\n[1, 2]"
+    wrong_output_reason: >
+      "['default']\n['default']\n['default']\n[1, 2]" — confuses `is None` with `not`.
+      `is None` returns True only for the None singleton, not for empty containers.
+      An explicitly passed [] is preserved as-is.
+
+  - id: py.none.none_default_set
+    skill: python-sharp-edges
+    topic: mutable_defaults
+    prompt: >
+      What does this program print?
+    code: |
+      def tag(value, tags=set()):
+          tags.add(value)
+          return tags
+
+      a = tag("x")
+      b = tag("y")
+      print(sorted(a))
+      print(sorted(b))
+      print(a is b)
+    choices:
+      - "['x']\n['y']\nFalse"
+      - "['x', 'y']\n['x', 'y']\nTrue"
+      - "['x']\n['x', 'y']\nFalse"
+    expected_output: "['x', 'y']\n['x', 'y']\nTrue"
+    wrong_output_reason: >
+      "['x']\n['y']\nFalse" — assumes the set() default creates a new set per call.
+      set() is evaluated once at definition time, just like []. The same set is
+      shared across all calls that omit tags.
+
+  - id: py.none.none_default_dict
+    skill: python-sharp-edges
+    topic: mutable_defaults
+    prompt: >
+      What does this program print?
+    code: |
+      def register(key, value, store={}):
+          store[key] = value
+          return store
+
+      a = register("x", 1)
+      b = register("y", 2)
+      print(a)
+      print(b)
+    choices:
+      - "{'x': 1}\n{'y': 2}"
+      - "{'x': 1, 'y': 2}\n{'x': 1, 'y': 2}"
+      - "{'y': 2}\n{'y': 2}"
+    expected_output: "{'x': 1, 'y': 2}\n{'x': 1, 'y': 2}"
+    wrong_output_reason: >
+      "{'x': 1}\n{'y': 2}" — same mutable default trap as with lists, applied to dict.
+      {} is evaluated once; a and b are the same dict object.
+
+  - id: py.none.falsy_none_check_with_zero
+    skill: python-semantics
+    topic: none_vs_empty
+    prompt: >
+      This function is meant to use a provided count, or default to 10 if none is given.
+      What does it print?
+    code: |
+      def repeat(msg, count=None):
+          if not count:
+              count = 10
+          return msg * count
+
+      print(repeat("hi", 3))
+      print(repeat("hi", 0))
+      print(repeat("hi"))
+    choices:
+      - "hihihi\n\nhihi...hi (10 times)"
+      - "hihihi\nhihi...hi (10 times)\nhihi...hi (10 times)"
+      - "hihihi\n\n"
+    expected_output: "hihihi\nhihi...hi (10 times)\nhihi...hi (10 times)"
+    wrong_output_reason: >
+      "hihihi\n\nhihi...hi (10 times)" — assumes `not count` only triggers when
+      count is None. 0 is also falsy, so passing count=0 (a meaningful value meaning
+      "repeat zero times") is incorrectly replaced by 10. Use `if count is None`.
+
+  - id: py.none.identity_not_equality_for_none
+    skill: python-semantics
+    topic: none_comparison
+    prompt: >
+      Both functions check for None. Do they always behave the same?
+    code: |
+      class Sneaky:
+          def __eq__(self, other):
+              return other is None
+
+      s = Sneaky()
+      print(s == None)
+      print(s is None)
+    choices:
+      - "True\nTrue"
+      - "False\nFalse"
+      - "True\nFalse"
+      - "False\nTrue"
+    expected_output: "True\nFalse"
+    wrong_output_reason: >
+      "True\nTrue" or "False\nFalse" — assumes == and is are interchangeable for None.
+      == calls __eq__, which can be overridden; s.__eq__(None) returns True.
+      is tests identity, which cannot be overridden; s is not the None singleton.
+      Only `is None` reliably checks for None.
+
+  - id: py.none.none_not_in_empty_containers
+    skill: python-semantics
+    topic: none_vs_empty
+    prompt: >
+      What does this program print?
+    code: |
+      print(None in [])
+      print(None in [None])
+      print(None == [])
+      print([] is None)
+    choices:
+      - "True\nTrue\nTrue\nFalse"
+      - "False\nTrue\nFalse\nFalse"
+      - "True\nTrue\nFalse\nFalse"
+    expected_output: "False\nTrue\nFalse\nFalse"
+    wrong_output_reason: >
+      "True\nTrue\nFalse\nFalse" — assumes None is somehow "in" an empty container
+      because both are falsy. `in` tests membership using __eq__; [] contains no
+      elements, so None is not in []. None in [None] is True because [None] does
+      contain the None singleton.
