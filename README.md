@@ -153,6 +153,21 @@ are characterization tests, written to a separate `*.generated` test file; an
 optional review pass on a stronger model judges whether each pinned behavior is
 correct.
 
+### layering-rules-check
+
+Checks layering rules that lint and the compiler do not enforce, in a repo in
+any programming language: a production module that imports a test module, a
+layer that imports a layer the rules forbid, a package that imports a package it
+does not declare, a barrel that re-exports another directory's module, and
+source files the repo's checkers skip. The model builds a layering rules file
+from the repo's docs and lint config, takes import edges from a language server
+(or text search when none exists), and checks them against the rules with a
+bundled Node script (no install). Findings are ranked, labeled by evidence
+source, and each carries a proposed change and a check that verifies it. The
+skill reports; it does not edit files. It is also a review lens: it follows the
+lens protocol, supports the `diff`, `repo`, and `paths` scopes, and can return
+findings in the structured format that `run-review-lenses` merges.
+
 ### useless-abstraction-scan
 
 A review lens, also usable on its own, on a change set or a whole repo. Finds
@@ -245,7 +260,7 @@ Invoke the skills as `$run-review-lenses`, `$adversarial-review`,
 `$dead-code-code-review`, `$ai-slop-code-review`, `$numerical-code-review`,
 `$codex-code-review` (which skips itself inside Codex),
 `$interactive-code-review`,
-`$ui-code-review`, `$concolic-test-generation`, `$useless-abstraction-scan`, `$duplicate-function-unifier`, the `$<lang>-grounding` skills,
+`$ui-code-review`, `$concolic-test-generation`, `$layering-rules-check`, `$useless-abstraction-scan`, `$duplicate-function-unifier`, the `$<lang>-grounding` skills,
 or describe a matching task
 and let Codex select the skill.
 
